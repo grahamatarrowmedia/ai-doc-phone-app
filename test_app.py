@@ -169,6 +169,19 @@ for collection in ['episodes', 'research', 'interviews', 'shots', 'assets', 'scr
     get_collection_routes(collection)
 
 
+# Override the assets delete to handle mock document cleanup
+@app.route("/api/assets/<asset_id>", methods=["DELETE"], endpoint="delete_assets_with_cleanup")
+def delete_asset_with_cleanup(asset_id):
+    """Delete an asset and its mock document if it exists."""
+    # Find the asset first
+    asset = next((a for a in storage['assets'] if a['id'] == asset_id), None)
+    if asset and asset.get('gcsPath') and asset['gcsPath'] in MOCK_DOCUMENTS:
+        del MOCK_DOCUMENTS[asset['gcsPath']]
+
+    storage['assets'] = [i for i in storage['assets'] if i['id'] != asset_id]
+    return jsonify({"success": True})
+
+
 # AI routes (mocked)
 @app.route("/api/ai/research", methods=["POST"])
 def ai_research():
@@ -420,6 +433,50 @@ def get_source_documents(project_id):
     """Get source documents for a project."""
     docs = [a for a in storage['assets'] if a.get('projectId') == project_id and a.get('isSourceDocument')]
     return jsonify(docs)
+
+
+@app.route("/api/projects/<project_id>/assets/clear-sources", methods=["DELETE"])
+def clear_source_documents(project_id):
+    """Delete all source documents for a project."""
+    source_docs = [a for a in storage['assets'] if a.get('projectId') == project_id and a.get('isSourceDocument')]
+    deleted_count = len(source_docs)
+
+    # Remove from storage
+    storage['assets'] = [a for a in storage['assets'] if not (a.get('projectId') == project_id and a.get('isSourceDocument'))]
+
+    # Clean up mock documents
+    for doc in source_docs:
+        if doc.get('gcsPath') and doc['gcsPath'] in MOCK_DOCUMENTS:
+            del MOCK_DOCUMENTS[doc['gcsPath']]
+
+    return jsonify({"success": True, "deleted": deleted_count})
+
+
+@app.route("/api/projects/<project_id>/assets/download-all", methods=["GET"])
+def download_all_source_documents(project_id):
+    """Download all source documents as a ZIP file."""
+    import zipfile
+    import io
+
+    source_docs = [a for a in storage['assets'] if a.get('projectId') == project_id and a.get('isSourceDocument')]
+
+    # Create ZIP in memory
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for doc in source_docs:
+            gcs_path = doc.get('gcsPath')
+            if gcs_path and gcs_path in MOCK_DOCUMENTS:
+                filename = doc.get('filename') or gcs_path.split('/')[-1]
+                zip_file.writestr(filename, MOCK_DOCUMENTS[gcs_path])
+
+    zip_buffer.seek(0)
+
+    return Response(
+        zip_buffer.getvalue(),
+        mimetype='application/zip',
+        headers={'Content-Disposition': f'attachment; filename="source-documents-{project_id[:8]}.zip"'}
+    )
 
 
 if __name__ == "__main__":

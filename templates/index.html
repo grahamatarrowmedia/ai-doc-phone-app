@@ -518,8 +518,16 @@
 
                 ${sourceAssets.length > 0 ? `
                     <div class="card">
-                        <h3 class="mb-2">📄 Source Documents (${sourceAssets.length})</h3>
-                        <p class="text-sm text-muted mb-3">Auto-archived from AI research for verification</p>
+                        <div class="source-docs-header">
+                            <div>
+                                <h3 class="mb-1">📄 Source Documents (${sourceAssets.length})</h3>
+                                <p class="text-sm text-muted">Auto-archived from AI research for verification</p>
+                            </div>
+                            <div class="source-docs-bulk-actions">
+                                <a href="/api/projects/${state.selectedProject}/assets/download-all" class="btn btn-secondary btn-sm" title="Download all as ZIP">⬇️ Download All</a>
+                                <button class="btn btn-danger btn-sm" onclick="clearAllSourceDocuments()" title="Delete all source documents">🗑️ Clear All</button>
+                            </div>
+                        </div>
                         <div class="source-assets-grid">
                             ${sourceAssets.map(a => `
                                 <div class="source-asset-card">
@@ -1178,6 +1186,21 @@
 
         function viewSourceDocument(path) {
             window.open(`/api/document/${path}`, '_blank');
+        }
+
+        async function clearAllSourceDocuments() {
+            const sourceCount = state.assets.filter(a => a.isSourceDocument).length;
+            if (!confirm(`Are you sure you want to delete all ${sourceCount} source documents?\n\nThis will permanently remove all archived research sources for this project.`)) {
+                return;
+            }
+
+            try {
+                const result = await api(`/api/projects/${state.selectedProject}/assets/clear-sources`, 'DELETE');
+                await loadProjectData();
+                alert(`Deleted ${result.deleted} source document(s).`);
+            } catch (error) {
+                alert('Error clearing source documents: ' + error.message);
+            }
         }
 
         // ============== Theme Toggle ==============

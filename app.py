@@ -483,9 +483,96 @@ def update_asset(asset_id):
 
 @app.route("/api/assets/<asset_id>", methods=["DELETE"])
 def delete_asset(asset_id):
-    """Delete an asset."""
+    """Delete an asset and its GCS file if it exists."""
+    # Get asset first to check for GCS file
+    asset = get_doc('assets', asset_id)
+    if asset and asset.get('gcsPath'):
+        try:
+            bucket = storage_client.bucket(STORAGE_BUCKET)
+            blob = bucket.blob(asset['gcsPath'])
+            if blob.exists():
+                blob.delete()
+        except Exception as e:
+            print(f"Error deleting GCS file: {e}")
+
     delete_doc('assets', asset_id)
     return jsonify({"success": True})
+
+
+@app.route("/api/projects/<project_id>/assets/clear-sources", methods=["DELETE"])
+def clear_source_documents(project_id):
+    """Delete all source documents for a project."""
+    try:
+        # Get all source documents
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isSourceDocument', '==', True
+        )
+
+        deleted_count = 0
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            # Delete GCS file if exists
+            if doc_data.get('gcsPath'):
+                try:
+                    blob = bucket.blob(doc_data['gcsPath'])
+                    if blob.exists():
+                        blob.delete()
+                except Exception as e:
+                    print(f"Error deleting GCS file {doc_data['gcsPath']}: {e}")
+
+            # Delete Firestore document
+            doc.reference.delete()
+            deleted_count += 1
+
+        return jsonify({"success": True, "deleted": deleted_count})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/assets/download-all", methods=["GET"])
+def download_all_source_documents(project_id):
+    """Download all source documents as a ZIP file."""
+    import zipfile
+    import io
+
+    try:
+        # Get all source documents
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isSourceDocument', '==', True
+        )
+
+        # Create ZIP in memory
+        zip_buffer = io.BytesIO()
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for doc in docs_ref.stream():
+                doc_data = doc.to_dict()
+                if doc_data.get('gcsPath'):
+                    try:
+                        blob = bucket.blob(doc_data['gcsPath'])
+                        if blob.exists():
+                            content = blob.download_as_bytes()
+                            filename = doc_data.get('filename') or doc_data['gcsPath'].split('/')[-1]
+                            zip_file.writestr(filename, content)
+                    except Exception as e:
+                        print(f"Error adding {doc_data['gcsPath']} to ZIP: {e}")
+
+        zip_buffer.seek(0)
+
+        return Response(
+            zip_buffer.getvalue(),
+            mimetype='application/zip',
+            headers={'Content-Disposition': f'attachment; filename="source-documents-{project_id[:8]}.zip"'}
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ============== Script Routes ==============
