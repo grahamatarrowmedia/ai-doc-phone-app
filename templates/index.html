@@ -488,6 +488,19 @@
             }
         }
 
+        async function updateProjectStyle(style) {
+            if (!state.selectedProject) return;
+
+            try {
+                await api(`/api/projects/${state.selectedProject}`, 'PUT', {
+                    style: style
+                });
+                state.project.style = style;
+            } catch (error) {
+                alert('Error updating style: ' + error.message);
+            }
+        }
+
         // ============== Render Functions ==============
 
         function renderNav() {
@@ -528,7 +541,19 @@
 
             return `
                 <div class="card">
-                    <p class="mb-2">${state.project.description}</p>
+                    <p class="mb-2">${state.project.description || '<em>No description</em>'}</p>
+                    <div class="style-field mt-3">
+                        <label class="style-label">Documentary Style:</label>
+                        <div class="style-edit-row">
+                            <input type="text"
+                                   id="project-style-input"
+                                   class="style-input"
+                                   value="${(state.project.style || '').replace(/"/g, '&quot;')}"
+                                   placeholder="e.g., investigative, observational, cinematic..."
+                                   onchange="updateProjectStyle(this.value)">
+                            <button class="mic-btn" onclick="toggleSpeech('project-style-input')" title="Speak">🎤</button>
+                        </div>
+                    </div>
                     <div class="flex gap-2 mt-3">
                         <span class="badge badge-blue">${state.project.status}</span>
                         <button class="ai-button" onclick="showAIModal('expand-topic', {topic: '${state.project.description}'})">
