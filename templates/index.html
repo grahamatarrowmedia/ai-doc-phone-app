@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Documentary Production App</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <!-- Header -->
+            <header class="header">
+                <h1>📽️ Documentary Production</h1>
+                <p id="project-name">Loading...</p>
+            </header>
+
+            <!-- Main Content -->
+            <main class="content" id="content">
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <p>Loading project data...</p>
+                </div>
+            </main>
+
+            <!-- Bottom Navigation -->
+            <nav class="nav" id="nav"></nav>
+        </div>
+    </div>
+
+    <!-- Modal Container -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Modal</h3>
+                <button onclick="closeModal()" class="close-btn">&times;</button>
+            </div>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- AI Modal -->
+    <div id="ai-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>✨ AI Assistant</h3>
+                <button onclick="closeAIModal()" class="close-btn">&times;</button>
+            </div>
+            <div id="ai-modal-content"></div>
+        </div>
+    </div>
+
+    <script>
+        // App State
+        const state = {
+            activeTab: 'dashboard',
+            selectedProject: null,
+            project: null,
+            episodes: [],
+            research: [],
+            interviews: [],
+            shots: [],
+            assets: [],
+            scripts: [],
+            loading: false
+        };
+
+        // Navigation items
+        const navItems = [
+            { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+            { id: 'episodes', icon: '📝', label: 'Episodes' },
+            { id: 'research', icon: '🔍', label: 'Research' },
+            { id: 'interviews', icon: '👥', label: 'Interviews' },
+            { id: 'production', icon: '🎬', label: 'Production' },
+            { id: 'assets', icon: '📦', label: 'Assets' },
+            { id: 'scripts', icon: '📄', label: 'Scripts' }
+        ];
+
+        // ============== API Functions ==============
+
+        async function api(endpoint, method = 'GET', data = null) {
+            const options = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (data) options.body = JSON.stringify(data);
+
+            const response = await fetch(endpoint, options);
+            return response.json();
+        }
+
+        async function loadProjectData() {
+            try {
+                // Get projects
+                let projects = await api('/api/projects');
+
+                // If no projects, initialize sample data
+                if (!projects || projects.length === 0) {
+                    const result = await api('/api/init-sample-data', 'POST');
+                    projects = await api('/api/projects');
+                }
+
+                if (projects.length > 0) {
+                    state.selectedProject = projects[0].id;
+                    state.project = projects[0];
+                    document.getElementById('project-name').textContent = state.project.title;
+
+                    // Load all related data
+                    const [episodes, research, interviews, shots, assets, scripts] = await Promise.all([
+                        api(`/api/projects/${state.selectedProject}/episodes`),
+                        api(`/api/projects/${state.selectedProject}/research`),
+                        api(`/api/projects/${state.selectedProject}/interviews`),
+                        api(`/api/projects/${state.selectedProject}/shots`),
+                        api(`/api/projects/${state.selectedProject}/assets`),
+                        api(`/api/projects/${state.selectedProject}/scripts`)
+                    ]);
+
+                    state.episodes = episodes || [];
+                    state.research = research || [];
+                    state.interviews = interviews || [];
+                    state.shots = shots || [];
+                    state.assets = assets || [];
+                    state.scripts = scripts || [];
+                }
+
+                render();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('content').innerHTML = `
+                    <div class="card error-card">
+                        <h3>Error Loading Data</h3>
+                        <p>${error.message}</p>
+                        <button class="btn btn-primary" onclick="loadProjectData()">Retry</button>
+                    </div>
+                `;
+            }
+        }
+
+        // ============== Render Functions ==============
+
+        function renderNav() {
+            const nav = document.getElementById('nav');
+            nav.innerHTML = navItems.map(item => `
+                <button class="nav-item ${state.activeTab === item.id ? 'active' : ''}" onclick="setTab('${item.id}')">
+                    <span>${item.icon}</span>
+                    <span>${item.label}</span>
+                </button>
+            `).join('');
+        }
+
+        function setTab(tab) {
+            state.activeTab = tab;
+            renderNav();
+            render();
+        }
+
+        function render() {
+            const content = document.getElementById('content');
+
+            switch(state.activeTab) {
+                case 'dashboard': content.innerHTML = renderDashboard(); break;
+                case 'episodes': content.innerHTML = renderEpisodes(); break;
+                case 'research': content.innerHTML = renderResearch(); break;
+                case 'interviews': content.innerHTML = renderInterviews(); break;
+                case 'production': content.innerHTML = renderProduction(); break;
+                case 'assets': content.innerHTML = renderAssets(); break;
+                case 'scripts': content.innerHTML = renderScripts(); break;
+            }
+        }
+
+        function renderDashboard() {
+            if (!state.project) return '<div class="card">No project loaded</div>';
+
+            return `
+                <div class="card">
+                    <p class="mb-2">${state.project.description}</p>
+                    <div class="flex gap-2 mt-3">
+                        <span class="badge badge-blue">${state.project.status}</span>
+                        <button class="ai-button" onclick="showAIModal('expand-topic', {topic: '${state.project.description}'})">
+                            ✨ Explore Ideas
+                        </button>
+                    </div>
+                </div>
+
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #2563eb;">${state.episodes.length}</div>
+                        <div class="stat-label">Episodes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #059669;">${state.interviews.length}</div>
+                        <div class="stat-label">Interviews</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #7c3aed;">${state.shots.length}</div>
+                        <div class="stat-label">Shots</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #ea580c;">${state.assets.length}</div>
+                        <div class="stat-label">Assets</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="mb-3">Episodes Overview</h3>
+                    <div class="episode-list">
+                        ${state.episodes.map(ep => `
+                            <div class="episode-item">
+                                <div class="flex" style="justify-content: space-between;">
+                                    <div>
+                                        <h4>${ep.title}</h4>
+                                        <p>${ep.description}</p>
+                                    </div>
+                                    <span class="badge badge-gray">${ep.status}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderEpisodes() {
+            return `
+                <div class="section-header">
+                    <h2>Episodes</h2>
+                    <button class="btn btn-primary" onclick="showAddModal('episode')">+ Add</button>
+                </div>
+                ${state.episodes.map(ep => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <h3>${ep.title}</h3>
+                                <p>${ep.description}</p>
+                                <div class="flex gap-2 mt-2">
+                                    <span class="text-sm text-muted">${ep.duration}</span>
+                                    <span class="badge badge-gray">${ep.status}</span>
+                                </div>
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick="showEditModal('episode', '${ep.id}')">✏️</button>
+                                <button class="btn-icon" onclick="deleteItem('episodes', '${ep.id}')">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function renderResearch() {
+            return `
+                <div class="section-header">
+                    <h2>Research</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('research')">✨ AI Research</button>
+                        <button class="btn btn-primary" onclick="showAddModal('research')">+ Add</button>
+                    </div>
+                </div>
+                ${state.research.map(r => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <div class="flex gap-2 mb-1 items-center">
+                                    <h3>${r.title}</h3>
+                                    <span class="badge badge-blue">${r.category}</span>
+                                </div>
+                                <p class="whitespace-pre">${r.content}</p>
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick="showEditModal('research', '${r.id}')">✏️</button>
+                                <button class="btn-icon" onclick="deleteItem('research', '${r.id}')">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function renderInterviews() {
+            return `
+                <div class="section-header">
+                    <h2>Interviews</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('interview')">✨ AI Questions</button>
+                        <button class="btn btn-primary" onclick="showAddModal('interview')">+ Add</button>
+                    </div>
+                </div>
+                ${state.interviews.map(i => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <h3>${i.subject}</h3>
+                                <p>${i.role}</p>
+                                <span class="badge badge-green mt-2">${i.status}</span>
+                                ${i.questions ? `
+                                    <div class="mt-3">
+                                        <div class="text-sm font-bold mb-1">Questions:</div>
+                                        <div class="text-sm whitespace-pre">${i.questions}</div>
+                                    </div>
+                                ` : ''}
+                                ${i.notes ? `<div class="mt-2 text-sm text-muted italic">${i.notes}</div>` : ''}
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick="showEditModal('interview', '${i.id}')">✏️</button>
+                                <button class="btn-icon" onclick="deleteItem('interviews', '${i.id}')">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function renderProduction() {
+            return `
+                <div class="section-header">
+                    <h2>Production</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('shot-ideas')">✨ Shot Ideas</button>
+                        <button class="btn btn-primary" onclick="showAddModal('shot')">+ Add</button>
+                    </div>
+                </div>
+                ${state.shots.map(s => {
+                    const episode = state.episodes.find(e => e.id === s.episodeId);
+                    return `
+                        <div class="card">
+                            <div class="item-header">
+                                <div class="flex-1">
+                                    ${episode ? `<div class="text-xs mb-1" style="color: #2563eb;">${episode.title}</div>` : ''}
+                                    <p class="font-bold">${s.description}</p>
+                                    <div class="text-sm mt-1 text-muted">
+                                        <div>📍 ${s.location}</div>
+                                        <div>🎥 ${s.equipment}</div>
+                                        ${s.shootDate ? `<div>📅 ${new Date(s.shootDate).toLocaleDateString()}</div>` : ''}
+                                    </div>
+                                    <span class="badge badge-purple mt-2">${s.status}</span>
+                                </div>
+                                <div class="item-actions">
+                                    <button class="btn-icon" onclick="showEditModal('shot', '${s.id}')">✏️</button>
+                                    <button class="btn-icon" onclick="deleteItem('shots', '${s.id}')">🗑️</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            `;
+        }
+
+        function renderAssets() {
+            return `
+                <div class="section-header">
+                    <h2>Assets</h2>
+                    <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
+                </div>
+                ${state.assets.map(a => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <div class="flex gap-2 mb-1 items-center">
+                                    <h3>${a.title}</h3>
+                                    <span class="badge badge-gray">${a.type}</span>
+                                </div>
+                                <p class="text-sm">Source: ${a.source}</p>
+                                <span class="badge badge-orange mt-2">${a.status}</span>
+                                ${a.notes ? `<p class="text-sm mt-2">${a.notes}</p>` : ''}
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick="showEditModal('asset', '${a.id}')">✏️</button>
+                                <button class="btn-icon" onclick="deleteItem('assets', '${a.id}')">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function renderScripts() {
+            return `
+                <div class="section-header">
+                    <h2>Scripts</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('script')">✨ AI Outline</button>
+                        <button class="btn btn-primary" onclick="showAddModal('script')">+ Add</button>
+                    </div>
+                </div>
+                ${state.scripts.map(s => {
+                    const episode = state.episodes.find(e => e.id === s.episodeId);
+                    return `
+                        <div class="card">
+                            <div class="item-header">
+                                <div class="flex-1">
+                                    ${episode ? `<div class="text-xs mb-1" style="color: #2563eb;">${episode.title}</div>` : ''}
+                                    <h3>${s.title}</h3>
+                                    <div class="script-content">${s.content}</div>
+                                </div>
+                                <div class="item-actions">
+                                    <button class="btn-icon" onclick="showEditModal('script', '${s.id}')">✏️</button>
+                                    <button class="btn-icon" onclick="deleteItem('scripts', '${s.id}')">🗑️</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            `;
+        }
+
+        // ============== Modal Functions ==============
+
+        function showModal(title, content) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-body').innerHTML = content;
+            document.getElementById('modal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+
+        function showAddModal(type) {
+            const forms = {
+                episode: `
+                    <form onsubmit="saveItem(event, 'episodes')">
+                        <input type="hidden" name="projectId" value="${state.selectedProject}">
+                        <input type="text" name="title" placeholder="Episode title" required>
+                        <textarea name="description" placeholder="Description" rows="3"></textarea>
+                        <input type="text" name="duration" placeholder="Duration (e.g., 45 min)">
+                        <select name="status">
+                            <option value="Planning">Planning</option>
+                            <option value="Research">Research</option>
+                            <option value="Scripting">Scripting</option>
+                            <option value="Production">Production</option>
+                            <option value="Post-Production">Post-Production</option>
+                            <option value="Complete">Complete</option>
+                        </select>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                `,
+                research: `
+                    <form onsubmit="saveItem(event, 'research')">
+                        <input type="hidden" name="projectId" value="${state.selectedProject}">
+                        <input type="text" name="title" placeholder="Title" required>
+                        <textarea name="content" placeholder="Research notes" rows="5" required></textarea>
+                        <select name="category">
+                            <option value="General">General</option>
+                            <option value="Archive">Archive</option>
+                            <option value="Background">Background</option>
+                            <option value="Contact">Contact</option>
+                            <option value="Location">Location</option>
+                        </select>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                `,
+                interview: `
+                    <form onsubmit="saveItem(event, 'interviews')">
+                        <input type="hidden" name="projectId" value="${state.selectedProject}">
+                        <input type="text" name="subject" placeholder="Subject name" required>
+                        <input type="text" name="role" placeholder="Role/Title">
+                        <select name="status">
+                            <option value="Potential">Potential</option>
+                            <option value="Requested">Requested</option>
+                            <option value="Confirmed">Confirmed</option>
+                            <option value="Completed">Completed</option>
+                        </select>
+                        <textarea name="questions" placeholder="Interview questions" rows="4"></textarea>
+                        <textarea name="notes" placeholder="Notes" rows="2"></textarea>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                `,
+                shot: `
+                    <form onsubmit="saveItem(event, 'shots')">
+                        <input type="hidden" name="projectId" value="${state.selectedProject}">
+                        <textarea name="description" placeholder="Shot description" rows="3" required></textarea>
+                        <input type="text" name="location" placeholder="Location">
+                        <input type="text" name="equipment" placeholder="Equipment needed">
+                        <input type="date" name="shootDate">
+                        <select name="status">
+                            <option value="Pending">Pending</option>
+                            <option value="Scheduled">Scheduled</option>
+                            <option value="Shot">Shot</option>
+                            <option value="Edited">Edited</option>
+                        </select>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                `,
+                asset: `
+                    <form onsubmit="saveItem(event, 'assets')">
+                        <input type="hidden" name="projectId" value="${state.selectedProject}">
+                        <input type="text" name="title" placeholder="Asset title" required>
+                        <select name="type">
+                            <option value="Video">Video</option>
+                            <option value="Audio">Audio</option>
+                            <option value="Image">Image</option>
+                            <option value="Document">Document</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <input type="text" name="source" placeholder="Source">
+                        <select name="status">
+                            <option value="Needed">Needed</option>
+                            <option value="Licensing">Licensing</option>
+                            <option value="Acquired">Acquired</option>
+                            <option value="Processed">Processed</option>
+                        </select>
+                        <textarea name="notes" placeholder="Notes" rows="2"></textarea>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                `,
+                script: `
+                    <form onsubmit="saveItem(event, 'scripts')">
+                        <input type="hidden" name="projectId" value="${state.selectedProject}">
+                        <input type="text" name="title" placeholder="Script title" required>
+                        <textarea name="content" placeholder="Script content" rows="10" required></textarea>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                `
+            };
+
+            const titles = {
+                episode: 'Add Episode',
+                research: 'Add Research',
+                interview: 'Add Interview',
+                shot: 'Add Shot',
+                asset: 'Add Asset',
+                script: 'Add Script'
+            };
+
+            showModal(titles[type], forms[type]);
+        }
+
+        function showEditModal(type, id) {
+            const collectionMap = {
+                episode: 'episodes',
+                research: 'research',
+                interview: 'interviews',
+                shot: 'shots',
+                asset: 'assets',
+                script: 'scripts'
+            };
+
+            const item = state[collectionMap[type]].find(i => i.id === id);
+            if (!item) return;
+
+            // Simplified - show add modal with prefilled data
+            showAddModal(type);
+
+            // Fill in form data after a short delay
+            setTimeout(() => {
+                const form = document.querySelector('#modal-body form');
+                if (form) {
+                    form.dataset.editId = id;
+                    form.dataset.editType = collectionMap[type];
+
+                    Object.keys(item).forEach(key => {
+                        const input = form.querySelector(`[name="${key}"]`);
+                        if (input) input.value = item[key] || '';
+                    });
+                }
+            }, 50);
+        }
+
+        async function saveItem(event, collection) {
+            event.preventDefault();
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                const editId = form.dataset.editId;
+                const editType = form.dataset.editType;
+
+                if (editId && editType) {
+                    // Update existing
+                    await api(`/api/${editType}/${editId}`, 'PUT', data);
+                } else {
+                    // Create new
+                    await api(`/api/${collection}`, 'POST', data);
+                }
+
+                closeModal();
+                await loadProjectData();
+            } catch (error) {
+                alert('Error saving: ' + error.message);
+            }
+        }
+
+        async function deleteItem(collection, id) {
+            if (!confirm('Are you sure you want to delete this item?')) return;
+
+            try {
+                await api(`/api/${collection}/${id}`, 'DELETE');
+                await loadProjectData();
+            } catch (error) {
+                alert('Error deleting: ' + error.message);
+            }
+        }
+
+        // ============== AI Modal Functions ==============
+
+        function showAIModal(type, context = {}) {
+            const modal = document.getElementById('ai-modal');
+            const content = document.getElementById('ai-modal-content');
+
+            const templates = {
+                research: `
+                    <div class="ai-section">
+                        <h4>🔍 Research Assistant</h4>
+                        <p class="text-sm text-muted mb-3">Get help finding sources, contacts, and background information.</p>
+                        <textarea id="ai-query" class="ai-input" rows="3" placeholder="What do you need research help with?"></textarea>
+                        <button class="ai-button" onclick="runAI('research')" id="ai-btn">✨ Get Research Help</button>
+                        <div id="ai-result"></div>
+                    </div>
+                `,
+                interview: `
+                    <div class="ai-section">
+                        <h4>💬 Interview Question Generator</h4>
+                        <p class="text-sm text-muted mb-3">Generate thoughtful interview questions.</p>
+                        <input id="ai-subject" class="ai-input" placeholder="Subject name">
+                        <input id="ai-role" class="ai-input" placeholder="Their role">
+                        <textarea id="ai-context" class="ai-input" rows="2" placeholder="What aspects to explore?"></textarea>
+                        <button class="ai-button" onclick="runAI('interview')" id="ai-btn">✨ Generate Questions</button>
+                        <div id="ai-result"></div>
+                    </div>
+                `,
+                script: `
+                    <div class="ai-section">
+                        <h4>📝 Script Outline Generator</h4>
+                        <p class="text-sm text-muted mb-3">Create a structured outline for your episode.</p>
+                        <input id="ai-title" class="ai-input" placeholder="Episode title" value="${context.title || ''}">
+                        <textarea id="ai-topic" class="ai-input" rows="3" placeholder="What should this episode cover?"></textarea>
+                        <input id="ai-duration" class="ai-input" placeholder="Target duration (e.g., 45 minutes)">
+                        <button class="ai-button" onclick="runAI('script')" id="ai-btn">✨ Generate Outline</button>
+                        <div id="ai-result"></div>
+                    </div>
+                `,
+                'shot-ideas': `
+                    <div class="ai-section">
+                        <h4>🎬 Shot List Ideas</h4>
+                        <p class="text-sm text-muted mb-3">Get creative shot ideas for your documentary.</p>
+                        <textarea id="ai-scene" class="ai-input" rows="3" placeholder="Describe the scene or topic"></textarea>
+                        <button class="ai-button" onclick="runAI('shot-ideas')" id="ai-btn">✨ Get Shot Ideas</button>
+                        <div id="ai-result"></div>
+                    </div>
+                `,
+                'expand-topic': `
+                    <div class="ai-section">
+                        <h4>💡 Topic Expansion</h4>
+                        <p class="text-sm text-muted mb-3">Explore angles, themes, and storylines.</p>
+                        <textarea id="ai-topic" class="ai-input" rows="3" placeholder="What topic to explore?">${context.topic || ''}</textarea>
+                        <button class="ai-button" onclick="runAI('expand-topic')" id="ai-btn">✨ Expand Topic</button>
+                        <div id="ai-result"></div>
+                    </div>
+                `
+            };
+
+            content.innerHTML = templates[type] || '';
+            content.dataset.aiType = type;
+            modal.classList.add('active');
+        }
+
+        function closeAIModal() {
+            document.getElementById('ai-modal').classList.remove('active');
+        }
+
+        async function runAI(type) {
+            const btn = document.getElementById('ai-btn');
+            const resultDiv = document.getElementById('ai-result');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-small"></span> Processing...';
+            resultDiv.innerHTML = '';
+
+            try {
+                let endpoint, body;
+                const projectTitle = state.project?.title || '';
+
+                switch(type) {
+                    case 'research':
+                        endpoint = '/api/ai/research';
+                        body = {
+                            query: document.getElementById('ai-query').value,
+                            projectContext: `${projectTitle} - ${state.project?.description || ''}`
+                        };
+                        break;
+                    case 'interview':
+                        endpoint = '/api/ai/interview-questions';
+                        body = {
+                            subject: document.getElementById('ai-subject').value,
+                            role: document.getElementById('ai-role').value,
+                            context: document.getElementById('ai-context').value,
+                            projectTitle
+                        };
+                        break;
+                    case 'script':
+                        endpoint = '/api/ai/script-outline';
+                        body = {
+                            title: document.getElementById('ai-title').value,
+                            topic: document.getElementById('ai-topic').value,
+                            duration: document.getElementById('ai-duration').value || '45 minutes',
+                            projectTitle
+                        };
+                        break;
+                    case 'shot-ideas':
+                        endpoint = '/api/ai/shot-ideas';
+                        body = {
+                            scene: document.getElementById('ai-scene').value,
+                            projectTitle
+                        };
+                        break;
+                    case 'expand-topic':
+                        endpoint = '/api/ai/expand-topic';
+                        body = {
+                            topic: document.getElementById('ai-topic').value,
+                            projectTitle
+                        };
+                        break;
+                }
+
+                const response = await api(endpoint, 'POST', body);
+
+                resultDiv.innerHTML = `
+                    <div class="ai-result">
+                        <pre>${response.result}</pre>
+                        ${type === 'research' ? `
+                            <button class="btn btn-primary mt-3" onclick="saveAIAsResearch()">💾 Save as Research Note</button>
+                        ` : ''}
+                        ${type === 'interview' ? `
+                            <button class="btn btn-primary mt-3" onclick="saveAIAsInterview()">💾 Save as Interview</button>
+                        ` : ''}
+                        ${type === 'script' ? `
+                            <button class="btn btn-primary mt-3" onclick="saveAIAsScript()">💾 Save as Script</button>
+                        ` : ''}
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error-card">Error: ${error.message}</div>`;
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = '✨ Try Again';
+        }
+
+        async function saveAIAsResearch() {
+            const query = document.getElementById('ai-query').value;
+            const result = document.querySelector('#ai-result pre').textContent;
+
+            await api('/api/research', 'POST', {
+                projectId: state.selectedProject,
+                title: query.substring(0, 100),
+                content: result,
+                category: 'AI Generated'
+            });
+
+            closeAIModal();
+            state.activeTab = 'research';
+            await loadProjectData();
+        }
+
+        async function saveAIAsInterview() {
+            const subject = document.getElementById('ai-subject').value;
+            const role = document.getElementById('ai-role').value;
+            const result = document.querySelector('#ai-result pre').textContent;
+
+            await api('/api/interviews', 'POST', {
+                projectId: state.selectedProject,
+                subject,
+                role,
+                status: 'Potential',
+                questions: result,
+                notes: 'Generated by AI'
+            });
+
+            closeAIModal();
+            state.activeTab = 'interviews';
+            await loadProjectData();
+        }
+
+        async function saveAIAsScript() {
+            const title = document.getElementById('ai-title').value;
+            const result = document.querySelector('#ai-result pre').textContent;
+
+            await api('/api/scripts', 'POST', {
+                projectId: state.selectedProject,
+                title,
+                content: result
+            });
+
+            closeAIModal();
+            state.activeTab = 'scripts';
+            await loadProjectData();
+        }
+
+        // ============== Initialize ==============
+
+        document.addEventListener('DOMContentLoaded', () => {
+            renderNav();
+            loadProjectData();
+        });
+    </script>
+</body>
+</html>
