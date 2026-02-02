@@ -322,7 +322,7 @@
                 formData.append('file', file);
                 formData.append('numEpisodes', numEpisodes);
 
-                const response = await fetch(API_BASE + '/api/ai/analyze-blueprint', {
+                const response = await fetch('/api/ai/analyze-blueprint', {
                     method: 'POST',
                     body: formData
                 });
