@@ -208,38 +208,223 @@
             content.innerHTML = `
                 <div id="new-project-form">
                     <p class="text-muted mb-3">Create your first documentary project to get started.</p>
-                    <form onsubmit="createNewProject(event)">
-                        <div class="input-with-mic">
-                            <input type="text" id="new-project-title" placeholder="Project title" required>
-                            <button type="button" class="mic-btn" data-for="new-project-title" onclick="toggleSpeech('new-project-title')" title="Speak">🎤</button>
-                        </div>
-                        <div class="input-with-mic">
-                            <textarea id="new-project-description" placeholder="Brief description of your documentary" rows="3"></textarea>
-                            <button type="button" class="mic-btn" data-for="new-project-description" onclick="toggleSpeech('new-project-description')" title="Speak">🎤</button>
-                        </div>
-                        <div class="input-with-mic">
-                            <textarea id="new-project-style" placeholder="Documentary style (e.g., investigative journalism, personal narrative, observational, educational, cinematic)" rows="2"></textarea>
-                            <button type="button" class="mic-btn" data-for="new-project-style" onclick="toggleSpeech('new-project-style')" title="Speak">🎤</button>
-                        </div>
-                        <select id="new-project-status">
-                            <option value="Planning">Planning</option>
-                            <option value="Research">Research</option>
-                            <option value="In Production">In Production</option>
-                            <option value="Post-Production">Post-Production</option>
-                        </select>
-                        <div class="episode-count-field">
-                            <label for="new-project-episodes">Number of episodes to generate:</label>
-                            <input type="number" id="new-project-episodes" min="1" max="20" value="5">
-                        </div>
-                        <div class="form-actions">
-                            <button type="button" class="btn btn-secondary" onclick="closeProjectsModal()">Cancel</button>
-                            <button type="submit" class="btn btn-primary">Create Project</button>
-                        </div>
-                    </form>
+
+                    <div class="project-create-tabs">
+                        <button type="button" class="tab-btn active" onclick="switchProjectTab('manual')">Manual Entry</button>
+                        <button type="button" class="tab-btn" onclick="switchProjectTab('blueprint')">From Blueprint</button>
+                    </div>
+
+                    <div id="manual-entry-tab" class="project-tab-content active">
+                        <form onsubmit="createNewProject(event)">
+                            <div class="input-with-mic">
+                                <input type="text" id="new-project-title" placeholder="Project title" required>
+                                <button type="button" class="mic-btn" data-for="new-project-title" onclick="toggleSpeech('new-project-title')" title="Speak">🎤</button>
+                            </div>
+                            <div class="input-with-mic">
+                                <textarea id="new-project-description" placeholder="Brief description of your documentary" rows="3"></textarea>
+                                <button type="button" class="mic-btn" data-for="new-project-description" onclick="toggleSpeech('new-project-description')" title="Speak">🎤</button>
+                            </div>
+                            <div class="input-with-mic">
+                                <textarea id="new-project-style" placeholder="Documentary style (e.g., investigative journalism, personal narrative, observational, educational, cinematic)" rows="2"></textarea>
+                                <button type="button" class="mic-btn" data-for="new-project-style" onclick="toggleSpeech('new-project-style')" title="Speak">🎤</button>
+                            </div>
+                            <select id="new-project-status">
+                                <option value="Planning">Planning</option>
+                                <option value="Research">Research</option>
+                                <option value="In Production">In Production</option>
+                                <option value="Post-Production">Post-Production</option>
+                            </select>
+                            <div class="episode-count-field">
+                                <label for="new-project-episodes">Number of episodes to generate:</label>
+                                <input type="number" id="new-project-episodes" min="1" max="20" value="5">
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" onclick="closeProjectsModal()">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Create Project</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div id="blueprint-tab" class="project-tab-content">
+                        <form onsubmit="createProjectFromBlueprint(event)">
+                            <div class="blueprint-upload-area" onclick="document.getElementById('blueprint-file').click()">
+                                <div class="upload-icon">📄</div>
+                                <p class="upload-text">Click to upload a blueprint</p>
+                                <p class="upload-hint">Document (PDF, TXT) or Video (MP4, MOV)</p>
+                                <input type="file" id="blueprint-file" accept=".pdf,.txt,.doc,.docx,.mp4,.mov,.avi,.mkv,.webm" onchange="handleBlueprintSelect(this)" style="display:none">
+                            </div>
+                            <div id="blueprint-file-info" class="blueprint-file-info" style="display:none">
+                                <span id="blueprint-filename"></span>
+                                <button type="button" class="btn-icon" onclick="clearBlueprintFile()">✕</button>
+                            </div>
+                            <div class="episode-count-field">
+                                <label for="blueprint-episodes">Number of episodes to generate:</label>
+                                <input type="number" id="blueprint-episodes" min="1" max="20" value="5">
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" onclick="closeProjectsModal()">Cancel</button>
+                                <button type="submit" class="btn btn-primary" id="blueprint-submit-btn" disabled>Analyze & Create</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             `;
 
             modal.classList.add('active');
+        }
+
+        function switchProjectTab(tab) {
+            document.querySelectorAll('.project-create-tabs .tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.project-tab-content').forEach(content => content.classList.remove('active'));
+
+            if (tab === 'manual') {
+                document.querySelector('.tab-btn:first-child').classList.add('active');
+                document.getElementById('manual-entry-tab').classList.add('active');
+            } else {
+                document.querySelector('.tab-btn:last-child').classList.add('active');
+                document.getElementById('blueprint-tab').classList.add('active');
+            }
+        }
+
+        function handleBlueprintSelect(input) {
+            const file = input.files[0];
+            if (file) {
+                document.getElementById('blueprint-file-info').style.display = 'flex';
+                document.getElementById('blueprint-filename').textContent = file.name;
+                document.getElementById('blueprint-submit-btn').disabled = false;
+                document.querySelector('.blueprint-upload-area').style.display = 'none';
+            }
+        }
+
+        function clearBlueprintFile() {
+            document.getElementById('blueprint-file').value = '';
+            document.getElementById('blueprint-file-info').style.display = 'none';
+            document.getElementById('blueprint-submit-btn').disabled = true;
+            document.querySelector('.blueprint-upload-area').style.display = 'block';
+        }
+
+        async function createProjectFromBlueprint(event) {
+            event.preventDefault();
+
+            const fileInput = document.getElementById('blueprint-file');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const numEpisodes = parseInt(document.getElementById('blueprint-episodes').value) || 5;
+            const submitBtn = document.getElementById('blueprint-submit-btn');
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-small"></span> Analyzing...';
+
+            try {
+                // Upload and analyze the blueprint
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('numEpisodes', numEpisodes);
+
+                const response = await fetch(API_BASE + '/api/ai/analyze-blueprint', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                const blueprint = data.blueprint;
+
+                // Create the project with extracted data
+                const newProject = await api('/api/projects', 'POST', {
+                    title: blueprint.title,
+                    description: blueprint.description,
+                    style: blueprint.style,
+                    status: 'Planning'
+                });
+
+                state.selectedProject = newProject.id;
+                closeProjectsModal();
+                await loadProjectData();
+
+                // Show the extracted episodes for confirmation
+                showBlueprintEpisodes(newProject.id, blueprint);
+
+            } catch (error) {
+                alert('Error analyzing blueprint: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Analyze & Create';
+            }
+        }
+
+        function showBlueprintEpisodes(projectId, blueprint) {
+            const modal = document.getElementById('ai-modal');
+            const content = document.getElementById('ai-modal-content');
+
+            content.innerHTML = `
+                <div class="ai-section">
+                    <h4>📋 Blueprint Analysis Complete</h4>
+                    <p class="text-sm text-muted mb-3">Project created: <strong>${blueprint.title}</strong></p>
+                    <p class="text-sm mb-3"><em>Style: ${blueprint.style}</em></p>
+
+                    <h5 class="mb-2">Suggested Episodes:</h5>
+                    <div class="topic-list">
+                        ${blueprint.episodes.map((ep, i) => `
+                            <label class="topic-item">
+                                <input type="checkbox" checked data-topic-index="${i}"
+                                       data-title="${ep.title?.replace(/"/g, '&quot;') || ''}"
+                                       data-description="${ep.description?.replace(/"/g, '&quot;') || ''}"
+                                       data-order="${ep.order || i + 1}">
+                                <div>
+                                    <strong>${ep.title}</strong>
+                                    <p class="text-sm text-muted">${ep.description}</p>
+                                </div>
+                            </label>
+                        `).join('')}
+                    </div>
+                    <div class="form-actions mt-3">
+                        <button class="btn btn-secondary" onclick="closeAIModal()">Skip Episodes</button>
+                        <button class="btn btn-primary" onclick="createBlueprintEpisodes('${projectId}')">Create Selected</button>
+                    </div>
+                </div>
+            `;
+            modal.classList.add('active');
+        }
+
+        async function createBlueprintEpisodes(projectId) {
+            const checkboxes = document.querySelectorAll('.topic-list input[type="checkbox"]:checked');
+            const episodes = Array.from(checkboxes).map(cb => ({
+                title: cb.dataset.title,
+                description: cb.dataset.description,
+                order: parseInt(cb.dataset.order),
+                status: 'Planning',
+                projectId: projectId
+            }));
+
+            if (episodes.length === 0) {
+                closeAIModal();
+                return;
+            }
+
+            const content = document.getElementById('ai-modal-content');
+            content.innerHTML = `
+                <div class="ai-section">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <p>Creating ${episodes.length} episodes...</p>
+                    </div>
+                </div>
+            `;
+
+            try {
+                for (const episode of episodes) {
+                    await api('/api/episodes', 'POST', episode);
+                }
+                await loadProjectData();
+                closeAIModal();
+            } catch (error) {
+                alert('Error creating episodes: ' + error.message);
+                closeAIModal();
+            }
         }
 
         // ============== Project Management ==============
@@ -269,34 +454,65 @@
                 </div>
                 <div id="new-project-form" style="display: none;">
                     <h4 class="mt-3 mb-2">Create New Project</h4>
-                    <form onsubmit="createNewProject(event)">
-                        <div class="input-with-mic">
-                            <input type="text" id="new-project-title" placeholder="Project title" required>
-                            <button type="button" class="mic-btn" data-for="new-project-title" onclick="toggleSpeech('new-project-title')" title="Speak">🎤</button>
-                        </div>
-                        <div class="input-with-mic">
-                            <textarea id="new-project-description" placeholder="Brief description of your documentary" rows="3"></textarea>
-                            <button type="button" class="mic-btn" data-for="new-project-description" onclick="toggleSpeech('new-project-description')" title="Speak">🎤</button>
-                        </div>
-                        <div class="input-with-mic">
-                            <textarea id="new-project-style" placeholder="Documentary style (e.g., investigative journalism, personal narrative, observational, educational, cinematic)" rows="2"></textarea>
-                            <button type="button" class="mic-btn" data-for="new-project-style" onclick="toggleSpeech('new-project-style')" title="Speak">🎤</button>
-                        </div>
-                        <select id="new-project-status">
-                            <option value="Planning">Planning</option>
-                            <option value="Research">Research</option>
-                            <option value="In Production">In Production</option>
-                            <option value="Post-Production">Post-Production</option>
-                        </select>
-                        <div class="episode-count-field">
-                            <label for="new-project-episodes">Number of episodes to generate:</label>
-                            <input type="number" id="new-project-episodes" min="1" max="20" value="5">
-                        </div>
-                        <div class="form-actions">
-                            <button type="button" class="btn btn-secondary" onclick="hideNewProjectForm()">Cancel</button>
-                            <button type="submit" class="btn btn-primary">Create Project</button>
-                        </div>
-                    </form>
+
+                    <div class="project-create-tabs">
+                        <button type="button" class="tab-btn active" onclick="switchProjectTab('manual')">Manual Entry</button>
+                        <button type="button" class="tab-btn" onclick="switchProjectTab('blueprint')">From Blueprint</button>
+                    </div>
+
+                    <div id="manual-entry-tab" class="project-tab-content active">
+                        <form onsubmit="createNewProject(event)">
+                            <div class="input-with-mic">
+                                <input type="text" id="new-project-title" placeholder="Project title" required>
+                                <button type="button" class="mic-btn" data-for="new-project-title" onclick="toggleSpeech('new-project-title')" title="Speak">🎤</button>
+                            </div>
+                            <div class="input-with-mic">
+                                <textarea id="new-project-description" placeholder="Brief description of your documentary" rows="3"></textarea>
+                                <button type="button" class="mic-btn" data-for="new-project-description" onclick="toggleSpeech('new-project-description')" title="Speak">🎤</button>
+                            </div>
+                            <div class="input-with-mic">
+                                <textarea id="new-project-style" placeholder="Documentary style (e.g., investigative journalism, personal narrative, observational, educational, cinematic)" rows="2"></textarea>
+                                <button type="button" class="mic-btn" data-for="new-project-style" onclick="toggleSpeech('new-project-style')" title="Speak">🎤</button>
+                            </div>
+                            <select id="new-project-status">
+                                <option value="Planning">Planning</option>
+                                <option value="Research">Research</option>
+                                <option value="In Production">In Production</option>
+                                <option value="Post-Production">Post-Production</option>
+                            </select>
+                            <div class="episode-count-field">
+                                <label for="new-project-episodes">Number of episodes to generate:</label>
+                                <input type="number" id="new-project-episodes" min="1" max="20" value="5">
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" onclick="hideNewProjectForm()">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Create Project</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div id="blueprint-tab" class="project-tab-content">
+                        <form onsubmit="createProjectFromBlueprint(event)">
+                            <div class="blueprint-upload-area" onclick="document.getElementById('blueprint-file').click()">
+                                <div class="upload-icon">📄</div>
+                                <p class="upload-text">Click to upload a blueprint</p>
+                                <p class="upload-hint">Document (PDF, TXT) or Video (MP4, MOV)</p>
+                                <input type="file" id="blueprint-file" accept=".pdf,.txt,.doc,.docx,.mp4,.mov,.avi,.mkv,.webm" onchange="handleBlueprintSelect(this)" style="display:none">
+                            </div>
+                            <div id="blueprint-file-info" class="blueprint-file-info" style="display:none">
+                                <span id="blueprint-filename"></span>
+                                <button type="button" class="btn-icon" onclick="clearBlueprintFile()">✕</button>
+                            </div>
+                            <div class="episode-count-field">
+                                <label for="blueprint-episodes">Number of episodes to generate:</label>
+                                <input type="number" id="blueprint-episodes" min="1" max="20" value="5">
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" onclick="hideNewProjectForm()">Cancel</button>
+                                <button type="submit" class="btn btn-primary" id="blueprint-submit-btn" disabled>Analyze & Create</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             `;
 

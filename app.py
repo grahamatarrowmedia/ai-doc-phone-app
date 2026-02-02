@@ -856,6 +856,148 @@ Return ONLY the JSON array, no other text."""
         return jsonify({"topics": [], "raw": result, "error": str(e)})
 
 
+@app.route("/api/ai/analyze-blueprint", methods=["POST"])
+def ai_analyze_blueprint():
+    """Analyze an uploaded document or video to extract project blueprint."""
+    import json
+    import tempfile
+    import mimetypes
+    from vertexai.generative_models import Part
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    num_episodes = int(request.form.get('numEpisodes', 5))
+
+    # Get file extension and mime type
+    filename = file.filename
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    mime_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+
+    # Read file content
+    file_content = file.read()
+
+    system_prompt = """You are a documentary production analyst. Analyze the provided content and extract a project blueprint.
+
+IMPORTANT: Respond ONLY with a JSON object. No markdown, no explanation, just valid JSON.
+
+The JSON must have:
+- "title": A compelling project title (max 80 chars)
+- "description": A comprehensive description of what this documentary should cover (max 500 chars)
+- "style": The documentary style/approach that fits best (e.g., "investigative journalism", "observational", "personal narrative", "educational", "cinematic")
+- "episodes": An array of episode objects, each with "title", "description", and "order"
+
+Example response format:
+{
+  "title": "Documentary Title",
+  "description": "What this documentary is about...",
+  "style": "investigative journalism",
+  "episodes": [
+    {"title": "Episode 1 Title", "description": "What this episode covers", "order": 1},
+    {"title": "Episode 2 Title", "description": "What this episode covers", "order": 2}
+  ]
+}"""
+
+    try:
+        # Determine if it's a video or document
+        is_video = mime_type.startswith('video/') or ext in ['mp4', 'mov', 'avi', 'mkv', 'webm']
+        is_document = ext in ['pdf', 'txt', 'doc', 'docx', 'md'] or mime_type.startswith('text/')
+
+        if is_video:
+            # For videos, upload to GCS temporarily then use Gemini's video analysis
+            bucket = storage_client.bucket(STORAGE_BUCKET)
+            temp_blob_name = f"temp_blueprints/{hashlib.md5(file_content).hexdigest()}.{ext}"
+            blob = bucket.blob(temp_blob_name)
+            blob.upload_from_string(file_content, content_type=mime_type)
+
+            # Create a signed URL or use gs:// URI
+            video_uri = f"gs://{STORAGE_BUCKET}/{temp_blob_name}"
+
+            prompt = f"""Analyze this video and extract a documentary project blueprint.
+The video appears to be a reference, sample, or outline for a documentary project.
+
+Extract:
+1. The main topic/subject matter
+2. The narrative approach and style
+3. Key themes that should be covered
+4. Suggest {num_episodes} episode topics based on the content
+
+Return ONLY the JSON object as specified."""
+
+            # Use multimodal model with video
+            video_part = Part.from_uri(video_uri, mime_type=mime_type)
+            response = model.generate_content([system_prompt, video_part, prompt])
+            result = response.text
+
+            # Clean up temp file after a delay (async)
+            def cleanup():
+                import time
+                time.sleep(60)  # Wait for processing to complete
+                try:
+                    blob.delete()
+                except:
+                    pass
+            threading.Thread(target=cleanup, daemon=True).start()
+
+        elif is_document:
+            # For documents, extract text and analyze
+            if ext == 'pdf':
+                # Use PyPDF or similar - for now just send raw bytes to Gemini
+                doc_part = Part.from_data(file_content, mime_type='application/pdf')
+                prompt = f"""Analyze this PDF document and extract a documentary project blueprint.
+The document contains information about a documentary project or subject matter.
+
+Extract:
+1. The main topic/subject matter
+2. The suggested narrative approach and style
+3. Key themes that should be covered
+4. Suggest {num_episodes} episode topics based on the content
+
+Return ONLY the JSON object as specified."""
+
+                response = model.generate_content([system_prompt, doc_part, prompt])
+                result = response.text
+            else:
+                # For text files, decode and send as text
+                try:
+                    text_content = file_content.decode('utf-8')
+                except:
+                    text_content = file_content.decode('latin-1')
+
+                prompt = f"""Analyze this document and extract a documentary project blueprint.
+
+DOCUMENT CONTENT:
+{text_content[:50000]}
+
+Extract:
+1. The main topic/subject matter
+2. The suggested narrative approach and style
+3. Key themes that should be covered
+4. Suggest {num_episodes} episode topics based on the content
+
+Return ONLY the JSON object as specified."""
+
+                result = generate_ai_response(prompt, system_prompt)
+        else:
+            return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+
+        # Parse the JSON response
+        cleaned = result.strip()
+        if cleaned.startswith('```'):
+            lines = cleaned.split('\n')
+            cleaned = '\n'.join(lines[1:-1] if lines[-1].startswith('```') else lines[1:])
+
+        blueprint = json.loads(cleaned)
+        return jsonify({"blueprint": blueprint})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ============== Document Serving Routes ==============
 
 @app.route("/api/document/<path:blob_path>")
