@@ -316,7 +316,14 @@ def update_project(project_id):
 
 @app.route("/api/projects/<project_id>", methods=["DELETE"])
 def delete_project(project_id):
-    """Delete a project."""
+    """Delete a project and all related data."""
+    # Delete all related data first
+    for collection in ['episodes', 'research', 'interviews', 'shots', 'assets', 'scripts']:
+        docs = db.collection(COLLECTIONS[collection]).where('projectId', '==', project_id).stream()
+        for doc in docs:
+            doc.reference.delete()
+
+    # Delete the project itself
     delete_doc('projects', project_id)
     return jsonify({"success": True})
 
@@ -524,9 +531,40 @@ def ai_research():
     project_id = data.get('projectId', 'default')
     download_sources = data.get('downloadSources', True)
 
-    system_prompt = f"""You are a documentary research assistant. Help find sources, archives, contacts, and background information. Be specific and actionable. Include relevant URLs to sources when available.
+    system_prompt = f"""You are a documentary research assistant specializing in VERIFIED, MULTI-SOURCE research. Your role is to provide thoroughly vetted information for documentary production.
 
-Project context: {project_context}"""
+## CRITICAL RESEARCH REQUIREMENTS:
+
+1. **VERIFICATION MANDATE**: Only include information that can be verified from MULTIPLE independent sources. Never rely on a single source.
+
+2. **SOURCE HIERARCHY** (prioritize in this order):
+   - Primary sources (official archives, government records, academic institutions)
+   - Peer-reviewed publications and academic journals
+   - Established news organizations with editorial standards
+   - Official organizational websites
+   - Cross-referenced secondary sources
+
+3. **FOR EACH CLAIM OR FACT, YOU MUST**:
+   - Indicate verification status: ✅ VERIFIED (2+ sources) or ⚠️ SINGLE SOURCE
+   - List the corroborating sources
+   - Note if an archive exists and is accessible
+   - Provide direct URLs where available
+
+4. **DO NOT INCLUDE**:
+   - Unverified claims or rumors
+   - Information from single sources without corroboration
+   - Sources that cannot be independently verified
+   - Wikipedia as a primary source (use it only to find primary sources)
+
+5. **FORMAT REQUIREMENTS**:
+   - Group findings by verification confidence
+   - Clearly mark what has archive footage/documents available
+   - Include contact information for archives where possible
+   - Flag any information that needs further verification
+
+Project context: {project_context}
+
+Remember: For documentary production, ACCURACY IS PARAMOUNT. It's better to provide less information that is verified than more information that is uncertain."""
 
     result = generate_ai_response(query, system_prompt)
 

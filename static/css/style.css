@@ -560,21 +560,28 @@ textarea {
     justify-content: space-between;
     align-items: center;
     padding: 1rem;
-    border: 1px solid var(--gray-200);
+    border: 1px solid var(--border-color);
     border-radius: 0.5rem;
     margin-bottom: 0.5rem;
-    cursor: pointer;
     transition: all 0.2s;
 }
 
 .project-item:hover {
     border-color: var(--primary);
-    background: var(--gray-50);
 }
 
 .project-item.active {
     border-color: var(--primary);
-    background: #dbeafe;
+    background: rgba(37, 99, 235, 0.1);
+}
+
+.project-item-info {
+    flex: 1;
+    cursor: pointer;
+}
+
+.project-item-info:hover {
+    opacity: 0.8;
 }
 
 .project-item-info h4 {
@@ -585,14 +592,31 @@ textarea {
 
 .project-item-info p {
     font-size: 0.8125rem;
-    color: var(--gray-500);
+    color: var(--text-secondary);
     margin-bottom: 0.5rem;
+}
+
+.project-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
 }
 
 .project-active-badge {
     color: var(--success);
     font-weight: 600;
     font-size: 0.875rem;
+}
+
+.delete-project-btn {
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.delete-project-btn:hover {
+    opacity: 1;
+    background: rgba(220, 38, 38, 0.1);
 }
 
 .projects-actions {
