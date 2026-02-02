@@ -7,6 +7,20 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="manifest" href="/static/manifest.json">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        // Configure marked for better rendering
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+        // Custom renderer to open links in new tab
+        const renderer = new marked.Renderer();
+        renderer.link = function(href, title, text) {
+            const titleAttr = title ? ` title="${title}"` : '';
+            return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+        };
+        marked.use({ renderer });
+    </script>
     <meta name="theme-color" content="#2563eb">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -269,7 +283,7 @@
                                     <h3>${r.title}</h3>
                                     <span class="badge badge-blue">${r.category}</span>
                                 </div>
-                                <p class="whitespace-pre">${r.content}</p>
+                                <div class="research-content">${marked.parse(r.content || '')}</div>
                             </div>
                             <div class="item-actions">
                                 <button class="btn-icon" onclick="showEditModal('research', '${r.id}')">✏️</button>
@@ -351,12 +365,45 @@
         }
 
         function renderAssets() {
+            // Separate source documents from regular assets
+            const sourceAssets = state.assets.filter(a => a.isSourceDocument);
+            const regularAssets = state.assets.filter(a => !a.isSourceDocument);
+
             return `
                 <div class="section-header">
                     <h2>Assets</h2>
                     <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
                 </div>
-                ${state.assets.map(a => `
+
+                ${sourceAssets.length > 0 ? `
+                    <div class="card">
+                        <h3 class="mb-2">📄 Source Documents (${sourceAssets.length})</h3>
+                        <p class="text-sm text-muted mb-3">Auto-archived from AI research for verification</p>
+                        <div class="source-assets-grid">
+                            ${sourceAssets.map(a => `
+                                <div class="source-asset-card">
+                                    <div class="source-asset-info">
+                                        <div class="source-asset-title">${a.title}</div>
+                                        <div class="source-asset-meta">
+                                            <span>${formatBytes(a.sizeBytes)}</span>
+                                            <span class="badge badge-green">${a.status}</span>
+                                        </div>
+                                        <a href="${a.source}" target="_blank" class="source-asset-url">${truncateUrl(a.source)}</a>
+                                    </div>
+                                    <div class="source-asset-actions">
+                                        ${a.gcsPath ? `
+                                            <button class="btn-icon" onclick="viewSourceDocument('${a.gcsPath}')" title="View">👁️</button>
+                                            <a href="/api/download/${a.gcsPath}" class="btn-icon" title="Download">⬇️</a>
+                                        ` : ''}
+                                        <button class="btn-icon" onclick="deleteItem('assets', '${a.id}')" title="Delete">🗑️</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${regularAssets.map(a => `
                     <div class="card">
                         <div class="item-header">
                             <div class="flex-1">
@@ -626,7 +673,10 @@
                     <div class="ai-section">
                         <h4>🔍 Research Assistant</h4>
                         <p class="text-sm text-muted mb-3">Get help finding sources, contacts, and background information.</p>
-                        <textarea id="ai-query" class="ai-input" rows="3" placeholder="What do you need research help with?"></textarea>
+                        <div class="input-with-mic">
+                            <textarea id="ai-query" class="ai-input" rows="3" placeholder="What do you need research help with?"></textarea>
+                            <button type="button" class="mic-btn" data-for="ai-query" onclick="toggleSpeech('ai-query')" title="Speak">🎤</button>
+                        </div>
                         <button class="ai-button" onclick="runAI('research')" id="ai-btn">✨ Get Research Help</button>
                         <div id="ai-result"></div>
                     </div>
@@ -635,9 +685,18 @@
                     <div class="ai-section">
                         <h4>💬 Interview Question Generator</h4>
                         <p class="text-sm text-muted mb-3">Generate thoughtful interview questions.</p>
-                        <input id="ai-subject" class="ai-input" placeholder="Subject name">
-                        <input id="ai-role" class="ai-input" placeholder="Their role">
-                        <textarea id="ai-context" class="ai-input" rows="2" placeholder="What aspects to explore?"></textarea>
+                        <div class="input-with-mic">
+                            <input id="ai-subject" class="ai-input" placeholder="Subject name">
+                            <button type="button" class="mic-btn" data-for="ai-subject" onclick="toggleSpeech('ai-subject')" title="Speak">🎤</button>
+                        </div>
+                        <div class="input-with-mic">
+                            <input id="ai-role" class="ai-input" placeholder="Their role">
+                            <button type="button" class="mic-btn" data-for="ai-role" onclick="toggleSpeech('ai-role')" title="Speak">🎤</button>
+                        </div>
+                        <div class="input-with-mic">
+                            <textarea id="ai-context" class="ai-input" rows="2" placeholder="What aspects to explore?"></textarea>
+                            <button type="button" class="mic-btn" data-for="ai-context" onclick="toggleSpeech('ai-context')" title="Speak">🎤</button>
+                        </div>
                         <button class="ai-button" onclick="runAI('interview')" id="ai-btn">✨ Generate Questions</button>
                         <div id="ai-result"></div>
                     </div>
@@ -646,8 +705,14 @@
                     <div class="ai-section">
                         <h4>📝 Script Outline Generator</h4>
                         <p class="text-sm text-muted mb-3">Create a structured outline for your episode.</p>
-                        <input id="ai-title" class="ai-input" placeholder="Episode title" value="${context.title || ''}">
-                        <textarea id="ai-topic" class="ai-input" rows="3" placeholder="What should this episode cover?"></textarea>
+                        <div class="input-with-mic">
+                            <input id="ai-title" class="ai-input" placeholder="Episode title" value="${context.title || ''}">
+                            <button type="button" class="mic-btn" data-for="ai-title" onclick="toggleSpeech('ai-title')" title="Speak">🎤</button>
+                        </div>
+                        <div class="input-with-mic">
+                            <textarea id="ai-topic" class="ai-input" rows="3" placeholder="What should this episode cover?"></textarea>
+                            <button type="button" class="mic-btn" data-for="ai-topic" onclick="toggleSpeech('ai-topic')" title="Speak">🎤</button>
+                        </div>
                         <input id="ai-duration" class="ai-input" placeholder="Target duration (e.g., 45 minutes)">
                         <button class="ai-button" onclick="runAI('script')" id="ai-btn">✨ Generate Outline</button>
                         <div id="ai-result"></div>
@@ -657,7 +722,10 @@
                     <div class="ai-section">
                         <h4>🎬 Shot List Ideas</h4>
                         <p class="text-sm text-muted mb-3">Get creative shot ideas for your documentary.</p>
-                        <textarea id="ai-scene" class="ai-input" rows="3" placeholder="Describe the scene or topic"></textarea>
+                        <div class="input-with-mic">
+                            <textarea id="ai-scene" class="ai-input" rows="3" placeholder="Describe the scene or topic"></textarea>
+                            <button type="button" class="mic-btn" data-for="ai-scene" onclick="toggleSpeech('ai-scene')" title="Speak">🎤</button>
+                        </div>
                         <button class="ai-button" onclick="runAI('shot-ideas')" id="ai-btn">✨ Get Shot Ideas</button>
                         <div id="ai-result"></div>
                     </div>
@@ -666,7 +734,14 @@
                     <div class="ai-section">
                         <h4>💡 Topic Expansion</h4>
                         <p class="text-sm text-muted mb-3">Explore angles, themes, and storylines.</p>
-                        <textarea id="ai-topic" class="ai-input" rows="3" placeholder="What topic to explore?">${context.topic || ''}</textarea>
+                        <div class="input-with-mic">
+                            <textarea id="ai-topic" class="ai-input" rows="3" placeholder="What topic to explore?">${context.topic || ''}</textarea>
+                            <button type="button" class="mic-btn" data-for="ai-topic" onclick="toggleSpeech('ai-topic')" title="Speak">🎤</button>
+                        </div>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ai-use-project-context" ${context.topic ? 'checked' : ''}>
+                            <span>Include project context (${state.project?.title || 'current project'})</span>
+                        </label>
                         <button class="ai-button" onclick="runAI('expand-topic')" id="ai-btn">✨ Expand Topic</button>
                         <div id="ai-result"></div>
                     </div>
@@ -699,7 +774,9 @@
                         endpoint = '/api/ai/research';
                         body = {
                             query: document.getElementById('ai-query').value,
-                            projectContext: `${projectTitle} - ${state.project?.description || ''}`
+                            projectContext: `${projectTitle} - ${state.project?.description || ''}`,
+                            projectId: state.selectedProject,
+                            downloadSources: true
                         };
                         break;
                     case 'interview':
@@ -729,19 +806,48 @@
                         break;
                     case 'expand-topic':
                         endpoint = '/api/ai/expand-topic';
+                        const useProjectContext = document.getElementById('ai-use-project-context')?.checked;
                         body = {
                             topic: document.getElementById('ai-topic').value,
-                            projectTitle
+                            projectTitle: useProjectContext ? projectTitle : ''
                         };
                         break;
                 }
 
                 const response = await api(endpoint, 'POST', body);
 
+                // Build source documents section for research
+                let sourcesHtml = '';
+                if (type === 'research' && response.sources && response.sources.length > 0) {
+                    sourcesHtml = `
+                        <div class="source-docs-section">
+                            <h4>📄 Archived Source Documents (${response.sources.length})</h4>
+                            <div class="source-docs-list">
+                                ${response.sources.map(src => `
+                                    <div class="source-doc-item">
+                                        <div class="source-doc-info">
+                                            <span class="source-doc-title">${src.title || 'Document'}</span>
+                                            <a href="${src.url}" target="_blank" class="source-doc-url">${truncateUrl(src.url)}</a>
+                                        </div>
+                                        <div class="source-doc-actions">
+                                            ${src.gcsPath ? `
+                                                <button class="btn-icon" onclick="viewSourceDocument('${src.gcsPath}')" title="View">👁️</button>
+                                                <a href="/api/download/${src.gcsPath}" class="btn-icon" title="Download">⬇️</a>
+                                            ` : `<span class="badge badge-gray">${src.status}</span>`}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <p class="text-sm text-muted mt-2">Sources added to Assets tab for verification.</p>
+                        </div>
+                    `;
+                }
+
                 resultDiv.innerHTML = `
                     <div class="ai-result">
                         <div class="ai-result-content">${marked.parse(response.result)}</div>
                         <div class="ai-result-raw" style="display:none;">${response.result}</div>
+                        ${sourcesHtml}
                         ${type === 'research' ? `
                             <button class="btn btn-primary mt-3" onclick="saveAIAsResearch()">💾 Save as Research Note</button>
                         ` : ''}
@@ -750,6 +856,9 @@
                         ` : ''}
                         ${type === 'script' ? `
                             <button class="btn btn-primary mt-3" onclick="saveAIAsScript()">💾 Save as Script</button>
+                        ` : ''}
+                        ${type === 'expand-topic' ? `
+                            <button class="btn btn-primary mt-3" onclick="saveAIAsResearchFromTopic()">💾 Save as Research Note</button>
                         ` : ''}
                     </div>
                 `;
@@ -809,6 +918,125 @@
             closeAIModal();
             state.activeTab = 'scripts';
             await loadProjectData();
+        }
+
+        async function saveAIAsResearchFromTopic() {
+            const topic = document.getElementById('ai-topic').value;
+            const result = document.querySelector('#ai-result .ai-result-raw').textContent;
+
+            await api('/api/research', 'POST', {
+                projectId: state.selectedProject,
+                title: `Topic Exploration: ${topic.substring(0, 80)}`,
+                content: result,
+                category: 'AI Generated'
+            });
+
+            closeAIModal();
+            state.activeTab = 'research';
+            await loadProjectData();
+        }
+
+        // ============== Speech Recognition ==============
+
+        let recognition = null;
+        let isListening = false;
+
+        function initSpeechRecognition() {
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                recognition = new SpeechRecognition();
+                recognition.continuous = false;
+                recognition.interimResults = true;
+                recognition.lang = 'en-US';
+
+                recognition.onresult = (event) => {
+                    let transcript = '';
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        transcript += event.results[i][0].transcript;
+                    }
+                    const targetInput = document.querySelector('[data-speech-target]');
+                    if (targetInput) {
+                        targetInput.value = transcript;
+                    }
+                };
+
+                recognition.onend = () => {
+                    isListening = false;
+                    updateMicButtons();
+                };
+
+                recognition.onerror = (event) => {
+                    console.error('Speech recognition error:', event.error);
+                    isListening = false;
+                    updateMicButtons();
+                    if (event.error === 'not-allowed') {
+                        alert('Microphone access denied. Please allow microphone access to use speech input.');
+                    }
+                };
+
+                return true;
+            }
+            return false;
+        }
+
+        function toggleSpeech(inputId) {
+            if (!recognition && !initSpeechRecognition()) {
+                alert('Speech recognition is not supported in your browser. Try Chrome or Edge.');
+                return;
+            }
+
+            // Remove previous target
+            document.querySelectorAll('[data-speech-target]').forEach(el => el.removeAttribute('data-speech-target'));
+
+            const input = document.getElementById(inputId);
+            if (!input) return;
+
+            if (isListening) {
+                recognition.stop();
+                isListening = false;
+            } else {
+                input.setAttribute('data-speech-target', 'true');
+                recognition.start();
+                isListening = true;
+            }
+            updateMicButtons();
+        }
+
+        function updateMicButtons() {
+            document.querySelectorAll('.mic-btn').forEach(btn => {
+                if (isListening && btn.dataset.for === document.querySelector('[data-speech-target]')?.id) {
+                    btn.classList.add('listening');
+                    btn.innerHTML = '🔴';
+                } else {
+                    btn.classList.remove('listening');
+                    btn.innerHTML = '🎤';
+                }
+            });
+        }
+
+        // ============== Source Document Functions ==============
+
+        function truncateUrl(url) {
+            if (!url) return '';
+            try {
+                const urlObj = new URL(url);
+                const path = urlObj.pathname.length > 20 ? urlObj.pathname.substring(0, 20) + '...' : urlObj.pathname;
+                return urlObj.hostname + path;
+            } catch {
+                return url.length > 40 ? url.substring(0, 40) + '...' : url;
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function viewSourceDocument(path) {
+            window.open(`/api/document/${path}`, '_blank');
         }
 
         // ============== Initialize ==============

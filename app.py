@@ -1,10 +1,18 @@
 """
 Documentary Production App - Flask backend with Firestore and Vertex AI
+Includes source document auto-download for AI research
 """
 import os
+import re
+import hashlib
+import threading
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
-from google.cloud import firestore
+from urllib.parse import urlparse
+
+import requests
+from flask import Flask, render_template, request, jsonify, Response
+from google.cloud import firestore, storage
+from weasyprint import HTML
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
@@ -14,6 +22,9 @@ app = Flask(__name__)
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "your-project-id")
 LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-2.0-flash-001")
+STORAGE_BUCKET = os.environ.get("STORAGE_BUCKET", f"{PROJECT_ID}-doc-assets")
+MAX_URLS_PER_QUERY = 10
+DOWNLOAD_TIMEOUT = 30
 
 # Initialize Vertex AI
 vertexai.init(project=PROJECT_ID, location=LOCATION)
@@ -21,6 +32,9 @@ model = GenerativeModel(MODEL_NAME)
 
 # Initialize Firestore
 db = firestore.Client()
+
+# Initialize Cloud Storage
+storage_client = storage.Client()
 
 # Collection names
 COLLECTIONS = {
@@ -94,6 +108,162 @@ def generate_ai_response(prompt, system_prompt=""):
         return response.text
     except Exception as e:
         return f"AI error: {str(e)}"
+
+
+# ============== Source Document Functions ==============
+
+def extract_urls(text):
+    """Extract URLs from text, limited to MAX_URLS_PER_QUERY."""
+    url_pattern = r'https?://[^\s<>\[\]()"\']+'
+    urls = re.findall(url_pattern, text)
+    cleaned_urls = []
+    for url in urls:
+        url = url.rstrip('.,;:!?)')
+        if url and len(url) > 10:
+            cleaned_urls.append(url)
+    unique_urls = list(dict.fromkeys(cleaned_urls))
+    return unique_urls[:MAX_URLS_PER_QUERY]
+
+
+def convert_to_pdf(html_content, url):
+    """Convert HTML content to PDF."""
+    try:
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        if '<base' not in html_content.lower():
+            html_content = html_content.replace(
+                '<head>',
+                f'<head><base href="{base_url}">',
+                1
+            )
+        html = HTML(string=html_content, base_url=base_url)
+        pdf_bytes = html.write_pdf()
+        return pdf_bytes
+    except Exception as e:
+        print(f"PDF conversion error for {url}: {e}")
+        return None
+
+
+def download_and_store(url, bucket_name, project_id, research_id):
+    """Download a URL, convert to PDF, and store in GCS bucket."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=DOWNLOAD_TIMEOUT, allow_redirects=True)
+        response.raise_for_status()
+
+        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
+
+        parsed_url = urlparse(url)
+        path = parsed_url.path.strip('/')
+        if path:
+            base_filename = path.split('/')[-1]
+            base_filename = re.sub(r'[^\w\-.]', '_', base_filename)
+        else:
+            base_filename = parsed_url.netloc.replace('.', '_')
+
+        if '.' in base_filename:
+            base_filename = base_filename.rsplit('.', 1)[0]
+
+        title = base_filename.replace('_', ' ').title()
+        if 'html' in content_type:
+            title_match = re.search(r'<title[^>]*>([^<]+)</title>', response.text, re.IGNORECASE)
+            if title_match:
+                title = title_match.group(1).strip()
+
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+        bucket = storage_client.bucket(bucket_name)
+
+        result = {"url": url, "title": title, "status": "success"}
+
+        if content_type == 'application/pdf':
+            blob_path = f"{project_id}/{url_hash}_{base_filename}.pdf"
+            blob = bucket.blob(blob_path)
+            blob.upload_from_string(response.content, content_type='application/pdf')
+            result["gcsPath"] = blob_path
+            result["size_bytes"] = len(response.content)
+            result["filename"] = f"{base_filename}.pdf"
+
+        elif 'html' in content_type or 'text' in content_type:
+            pdf_bytes = convert_to_pdf(response.text, url)
+            if pdf_bytes:
+                blob_path = f"{project_id}/{url_hash}_{base_filename}.pdf"
+                blob = bucket.blob(blob_path)
+                blob.upload_from_string(pdf_bytes, content_type='application/pdf')
+                result["gcsPath"] = blob_path
+                result["size_bytes"] = len(pdf_bytes)
+                result["filename"] = f"{base_filename}.pdf"
+            else:
+                blob_path = f"{project_id}/{url_hash}_{base_filename}.html"
+                blob = bucket.blob(blob_path)
+                blob.upload_from_string(response.content, content_type='text/html')
+                result["gcsPath"] = blob_path
+                result["size_bytes"] = len(response.content)
+                result["filename"] = f"{base_filename}.html"
+        else:
+            ext = content_type.split('/')[-1] if '/' in content_type else 'bin'
+            blob_path = f"{project_id}/{url_hash}_{base_filename}.{ext}"
+            blob = bucket.blob(blob_path)
+            blob.upload_from_string(response.content, content_type=content_type)
+            result["gcsPath"] = blob_path
+            result["size_bytes"] = len(response.content)
+            result["filename"] = f"{base_filename}.{ext}"
+
+        if result.get("gcsPath"):
+            create_source_document_asset(project_id, research_id, result)
+
+        return result
+
+    except Exception as e:
+        return {"url": url, "status": "error", "error": str(e)}
+
+
+def create_source_document_asset(project_id, research_id, doc_result):
+    """Create a Firestore asset entry for a downloaded source document."""
+    try:
+        asset_data = {
+            "projectId": project_id,
+            "researchId": research_id,
+            "title": doc_result.get("title", "Untitled Document"),
+            "type": "Document",
+            "source": doc_result.get("url", ""),
+            "gcsPath": doc_result.get("gcsPath", ""),
+            "status": "Acquired",
+            "isSourceDocument": True,
+            "sizeBytes": doc_result.get("size_bytes", 0),
+            "filename": doc_result.get("filename", ""),
+            "createdAt": datetime.utcnow().isoformat(),
+            "updatedAt": datetime.utcnow().isoformat()
+        }
+        doc_ref = db.collection(COLLECTIONS['assets']).document()
+        doc_ref.set(asset_data)
+        print(f"Created source document asset: {doc_result.get('title')}")
+    except Exception as e:
+        print(f"Error creating asset: {e}")
+
+
+def process_source_documents_async(urls, bucket_name, project_id, research_id):
+    """Background thread to download and process source documents."""
+    for url in urls:
+        try:
+            result = download_and_store(url, bucket_name, project_id, research_id)
+            if result.get("status") == "error":
+                print(f"Failed to download {url}: {result.get('error')}")
+        except Exception as e:
+            print(f"Error processing {url}: {e}")
+
+
+def ensure_bucket_exists(bucket_name):
+    """Create bucket if it doesn't exist."""
+    try:
+        bucket = storage_client.bucket(bucket_name)
+        if not bucket.exists():
+            bucket = storage_client.create_bucket(bucket_name, location=LOCATION)
+        return True
+    except Exception as e:
+        print(f"Bucket error: {e}")
+        return False
 
 
 # ============== Routes ==============
@@ -347,17 +517,39 @@ def delete_script(script_id):
 
 @app.route("/api/ai/research", methods=["POST"])
 def ai_research():
-    """AI-assisted research."""
+    """AI-assisted research with automatic source document download."""
     data = request.get_json()
     query = data.get('query', '')
     project_context = data.get('projectContext', '')
+    project_id = data.get('projectId', 'default')
+    download_sources = data.get('downloadSources', True)
 
-    system_prompt = f"""You are a documentary research assistant. Help find sources, archives, contacts, and background information. Be specific and actionable.
+    system_prompt = f"""You are a documentary research assistant. Help find sources, archives, contacts, and background information. Be specific and actionable. Include relevant URLs to sources when available.
 
 Project context: {project_context}"""
 
     result = generate_ai_response(query, system_prompt)
-    return jsonify({"result": result})
+
+    response_data = {"result": result, "sources": []}
+
+    # Extract URLs and start background download
+    if download_sources:
+        urls = extract_urls(result)
+        if urls:
+            research_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + hashlib.md5(query.encode()).hexdigest()[:8]
+            response_data["sources"] = [{"url": url, "status": "downloading"} for url in urls]
+            response_data["researchId"] = research_id
+
+            # Start background download
+            ensure_bucket_exists(STORAGE_BUCKET)
+            download_thread = threading.Thread(
+                target=process_source_documents_async,
+                args=(urls, STORAGE_BUCKET, project_id, research_id)
+            )
+            download_thread.daemon = True
+            download_thread.start()
+
+    return jsonify(response_data)
 
 
 @app.route("/api/ai/interview-questions", methods=["POST"])
@@ -429,6 +621,72 @@ Suggest themes, storylines, key questions to answer, and unique perspectives."""
 
     result = generate_ai_response(prompt, system_prompt)
     return jsonify({"result": result})
+
+
+# ============== Document Serving Routes ==============
+
+@app.route("/api/document/<path:blob_path>")
+def get_document(blob_path):
+    """Serve a document from GCS (inline viewing)."""
+    try:
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(blob_path)
+
+        if not blob.exists():
+            return jsonify({"error": "Document not found"}), 404
+
+        content = blob.download_as_bytes()
+        content_type = blob.content_type or 'application/octet-stream'
+
+        return Response(
+            content,
+            mimetype=content_type,
+            headers={'Content-Disposition': f'inline; filename="{blob_path.split("/")[-1]}"'}
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/download/<path:blob_path>")
+def download_document(blob_path):
+    """Download a document from GCS (attachment)."""
+    try:
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(blob_path)
+
+        if not blob.exists():
+            return jsonify({"error": "Document not found"}), 404
+
+        content = blob.download_as_bytes()
+        content_type = blob.content_type or 'application/octet-stream'
+        filename = blob_path.split("/")[-1]
+
+        return Response(
+            content,
+            mimetype=content_type,
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/source-documents", methods=["GET"])
+def get_source_documents(project_id):
+    """Get all source documents for a project."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isSourceDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ============== Initialize Sample Data ==============

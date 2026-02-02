@@ -23,9 +23,9 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1'
+      - 'GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$PROJECT_ID-doc-assets'
       - '--memory'
-      - '512Mi'
+      - '1Gi'
 
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app:latest'

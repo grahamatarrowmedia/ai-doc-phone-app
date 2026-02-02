@@ -4,8 +4,9 @@ No GCP dependencies required for UI testing
 """
 import os
 import uuid
+import hashlib
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 
 app = Flask(__name__)
 
@@ -19,6 +20,9 @@ storage = {
     'assets': [],
     'scripts': []
 }
+
+# Mock document storage
+MOCK_DOCUMENTS = {}
 
 
 def init_sample_data():
@@ -140,23 +144,103 @@ for collection in ['episodes', 'research', 'interviews', 'shots', 'assets', 'scr
 @app.route("/api/ai/research", methods=["POST"])
 def ai_research():
     data = request.get_json()
-    return jsonify({"result": f"""## Research Results for: {data.get('query', 'your query')}
+    query = data.get('query', 'your query')
+    project_id = data.get('projectId', 'default')
+    download_sources = data.get('downloadSources', True)
+
+    result_text = f"""## Research Results for: {query}
 
 ### Suggested Sources
 1. **NASA History Office** - Primary source for Apollo documentation
+   - https://www.nasa.gov/history/
 2. **Smithsonian Air & Space Museum** - Extensive artifact collection
+   - https://airandspace.si.edu/
 3. **Kennedy Space Center Archives** - Launch documentation
+   - https://www.kennedyspacecenter.com/
 
 ### Key Contacts
 - Dr. Sarah Mitchell, NASA Historian
 - Space Center Houston Research Department
+
+### Online Archives
+- Internet Archive: https://archive.org/
+- National Archives: https://www.archives.gov/
 
 ### Next Steps
 1. Submit FOIA request for classified documents
 2. Schedule archive visit
 3. Contact listed experts for interviews
 
-*This is a mock AI response for testing purposes.*"""})
+*This is a mock AI response for testing purposes.*"""
+
+    response_data = {"result": result_text, "sources": []}
+
+    if download_sources:
+        research_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + hashlib.md5(query.encode()).hexdigest()[:8]
+        response_data["researchId"] = research_id
+
+        # Mock source documents
+        mock_sources = [
+            {"url": "https://www.nasa.gov/history/", "title": "NASA History", "filename": "nasa_history.pdf", "size_bytes": 125000},
+            {"url": "https://airandspace.si.edu/", "title": "Smithsonian Air & Space", "filename": "smithsonian.pdf", "size_bytes": 230000},
+            {"url": "https://archive.org/", "title": "Internet Archive", "filename": "archive.pdf", "size_bytes": 89000},
+        ]
+
+        response_data["sources"] = []
+        for src in mock_sources:
+            url_hash = hashlib.md5(src["url"].encode()).hexdigest()[:8]
+            gcs_path = f"{project_id}/{url_hash}_{src['filename']}"
+
+            # Create mock document content
+            MOCK_DOCUMENTS[gcs_path] = create_mock_document(src["title"], src["url"])
+
+            # Create mock asset
+            asset_id = str(uuid.uuid4())
+            storage['assets'].append({
+                'id': asset_id,
+                'projectId': project_id,
+                'researchId': research_id,
+                'title': src["title"],
+                'type': 'Document',
+                'source': src["url"],
+                'gcsPath': gcs_path,
+                'status': 'Acquired',
+                'isSourceDocument': True,
+                'sizeBytes': src["size_bytes"],
+                'filename': src["filename"],
+                'createdAt': datetime.utcnow().isoformat()
+            })
+
+            response_data["sources"].append({
+                "url": src["url"],
+                "status": "success",
+                "title": src["title"],
+                "gcsPath": gcs_path
+            })
+
+    return jsonify(response_data)
+
+
+def create_mock_document(title, url):
+    """Create mock HTML document content."""
+    return f"""<!DOCTYPE html>
+<html>
+<head><title>{title}</title>
+<style>
+body {{ font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }}
+h1 {{ color: #333; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }}
+.meta {{ color: #666; margin-bottom: 20px; }}
+.notice {{ background: #f0f9ff; border: 1px solid #bae6fd; padding: 15px; border-radius: 8px; margin-top: 20px; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<p class="meta">Source: <a href="{url}">{url}</a></p>
+<p>This is a mock archived document for testing purposes.</p>
+<p>In production, this would be the actual PDF conversion of the source webpage.</p>
+<div class="notice"><strong>Test Mode:</strong> Deploy to production to see real PDF conversions.</div>
+</body>
+</html>""".encode()
 
 
 @app.route("/api/ai/interview-questions", methods=["POST"])
@@ -258,6 +342,39 @@ def ai_expand():
 - Modern parallels
 
 *This is a mock AI response for testing purposes.*"""})
+
+
+# Document serving routes
+@app.route("/api/document/<path:blob_path>")
+def get_document(blob_path):
+    """Serve a mock document (inline)."""
+    if blob_path in MOCK_DOCUMENTS:
+        return Response(
+            MOCK_DOCUMENTS[blob_path],
+            mimetype='text/html',
+            headers={'Content-Disposition': f'inline; filename="{blob_path.split("/")[-1]}"'}
+        )
+    return jsonify({"error": "Document not found"}), 404
+
+
+@app.route("/api/download/<path:blob_path>")
+def download_document(blob_path):
+    """Download a mock document (attachment)."""
+    if blob_path in MOCK_DOCUMENTS:
+        filename = blob_path.split("/")[-1]
+        return Response(
+            MOCK_DOCUMENTS[blob_path],
+            mimetype='text/html',
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        )
+    return jsonify({"error": "Document not found"}), 404
+
+
+@app.route("/api/projects/<project_id>/source-documents", methods=["GET"])
+def get_source_documents(project_id):
+    """Get source documents for a project."""
+    docs = [a for a in storage['assets'] if a.get('projectId') == project_id and a.get('isSourceDocument')]
+    return jsonify(docs)
 
 
 if __name__ == "__main__":
