@@ -6,6 +6,7 @@
     <title>Documentary Production App</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="manifest" href="/static/manifest.json">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <meta name="theme-color" content="#2563eb">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -739,7 +740,8 @@
 
                 resultDiv.innerHTML = `
                     <div class="ai-result">
-                        <pre>${response.result}</pre>
+                        <div class="ai-result-content">${marked.parse(response.result)}</div>
+                        <div class="ai-result-raw" style="display:none;">${response.result}</div>
                         ${type === 'research' ? `
                             <button class="btn btn-primary mt-3" onclick="saveAIAsResearch()">💾 Save as Research Note</button>
                         ` : ''}
@@ -761,7 +763,7 @@
 
         async function saveAIAsResearch() {
             const query = document.getElementById('ai-query').value;
-            const result = document.querySelector('#ai-result pre').textContent;
+            const result = document.querySelector('#ai-result .ai-result-raw').textContent;
 
             await api('/api/research', 'POST', {
                 projectId: state.selectedProject,
@@ -778,7 +780,7 @@
         async function saveAIAsInterview() {
             const subject = document.getElementById('ai-subject').value;
             const role = document.getElementById('ai-role').value;
-            const result = document.querySelector('#ai-result pre').textContent;
+            const result = document.querySelector('#ai-result .ai-result-raw').textContent;
 
             await api('/api/interviews', 'POST', {
                 projectId: state.selectedProject,
@@ -796,7 +798,7 @@
 
         async function saveAIAsScript() {
             const title = document.getElementById('ai-title').value;
-            const result = document.querySelector('#ai-result pre').textContent;
+            const result = document.querySelector('#ai-result .ai-result-raw').textContent;
 
             await api('/api/scripts', 'POST', {
                 projectId: state.selectedProject,

@@ -103,22 +103,19 @@ def init_data():
 
 # Generic CRUD for collections
 def get_collection_routes(collection_name):
-    @app.route(f"/api/projects/<project_id>/{collection_name}", methods=["GET"])
     def get_items(project_id):
         items = [i for i in storage[collection_name] if i.get('projectId') == project_id]
         return jsonify(items)
-    get_items.__name__ = f"get_{collection_name}"
+    app.add_url_rule(f"/api/projects/<project_id>/{collection_name}", f"get_{collection_name}", get_items, methods=["GET"])
 
-    @app.route(f"/api/{collection_name}", methods=["POST"])
     def create_item():
         data = request.get_json()
         data['id'] = str(uuid.uuid4())
         data['createdAt'] = datetime.utcnow().isoformat()
         storage[collection_name].append(data)
         return jsonify(data), 201
-    create_item.__name__ = f"create_{collection_name}"
+    app.add_url_rule(f"/api/{collection_name}", f"create_{collection_name}", create_item, methods=["POST"])
 
-    @app.route(f"/api/{collection_name}/<item_id>", methods=["PUT"])
     def update_item(item_id):
         data = request.get_json()
         for i, item in enumerate(storage[collection_name]):
@@ -126,13 +123,12 @@ def get_collection_routes(collection_name):
                 storage[collection_name][i].update(data)
                 return jsonify(storage[collection_name][i])
         return jsonify({"error": "Not found"}), 404
-    update_item.__name__ = f"update_{collection_name}"
+    app.add_url_rule(f"/api/{collection_name}/<item_id>", f"update_{collection_name}", update_item, methods=["PUT"])
 
-    @app.route(f"/api/{collection_name}/<item_id>", methods=["DELETE"])
     def delete_item(item_id):
         storage[collection_name] = [i for i in storage[collection_name] if i['id'] != item_id]
         return jsonify({"success": True})
-    delete_item.__name__ = f"delete_{collection_name}"
+    app.add_url_rule(f"/api/{collection_name}/<item_id>", f"delete_{collection_name}", delete_item, methods=["DELETE"])
 
 
 # Register routes for all collections
