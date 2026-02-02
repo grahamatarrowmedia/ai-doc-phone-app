@@ -804,6 +804,7 @@ def ai_generate_topics():
     data = request.get_json()
     title = data.get('title', '')
     description = data.get('description', '')
+    style = data.get('style', '')
     num_topics = data.get('numTopics', 5)
 
     system_prompt = """You are a documentary series planner. Generate compelling episode topics that would make a cohesive documentary series.
@@ -821,10 +822,12 @@ Example response format:
   {"title": "Another Episode", "description": "Description of content", "order": 2}
 ]"""
 
+    style_instruction = f"\nStyle/Approach: {style}\nEnsure all episodes match this documentary style." if style else ""
+
     prompt = f"""Create {num_topics} episode topics for a documentary series:
 
 Title: {title}
-Description: {description}
+Description: {description}{style_instruction}
 
 Generate episode topics that:
 1. Cover the subject comprehensively

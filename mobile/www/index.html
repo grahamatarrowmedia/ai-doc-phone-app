@@ -217,6 +217,10 @@
                             <textarea id="new-project-description" placeholder="Brief description of your documentary" rows="3"></textarea>
                             <button type="button" class="mic-btn" data-for="new-project-description" onclick="toggleSpeech('new-project-description')" title="Speak">🎤</button>
                         </div>
+                        <div class="input-with-mic">
+                            <textarea id="new-project-style" placeholder="Documentary style (e.g., investigative journalism, personal narrative, observational, educational, cinematic)" rows="2"></textarea>
+                            <button type="button" class="mic-btn" data-for="new-project-style" onclick="toggleSpeech('new-project-style')" title="Speak">🎤</button>
+                        </div>
                         <select id="new-project-status">
                             <option value="Planning">Planning</option>
                             <option value="Research">Research</option>
@@ -274,6 +278,10 @@
                             <textarea id="new-project-description" placeholder="Brief description of your documentary" rows="3"></textarea>
                             <button type="button" class="mic-btn" data-for="new-project-description" onclick="toggleSpeech('new-project-description')" title="Speak">🎤</button>
                         </div>
+                        <div class="input-with-mic">
+                            <textarea id="new-project-style" placeholder="Documentary style (e.g., investigative journalism, personal narrative, observational, educational, cinematic)" rows="2"></textarea>
+                            <button type="button" class="mic-btn" data-for="new-project-style" onclick="toggleSpeech('new-project-style')" title="Speak">🎤</button>
+                        </div>
                         <select id="new-project-status">
                             <option value="Planning">Planning</option>
                             <option value="Research">Research</option>
@@ -318,6 +326,7 @@
 
             const title = document.getElementById('new-project-title').value;
             const description = document.getElementById('new-project-description').value;
+            const style = document.getElementById('new-project-style').value;
             const status = document.getElementById('new-project-status').value;
             const numEpisodes = parseInt(document.getElementById('new-project-episodes').value) || 5;
 
@@ -325,6 +334,7 @@
                 const newProject = await api('/api/projects', 'POST', {
                     title,
                     description,
+                    style,
                     status
                 });
 
@@ -333,20 +343,20 @@
                 await loadProjectData();
 
                 // Generate episode topics for the new project
-                showTopicSuggestions(newProject.id, title, description, numEpisodes);
+                showTopicSuggestions(newProject.id, title, description, style, numEpisodes);
             } catch (error) {
                 alert('Error creating project: ' + error.message);
             }
         }
 
-        async function showTopicSuggestions(projectId, title, description, numEpisodes = 5) {
+        async function showTopicSuggestions(projectId, title, description, style = '', numEpisodes = 5) {
             const modal = document.getElementById('ai-modal');
             const content = document.getElementById('ai-modal-content');
 
             content.innerHTML = `
                 <div class="ai-section">
                     <h4>✨ Generating ${numEpisodes} Episode Ideas...</h4>
-                    <p class="text-sm text-muted mb-3">Based on your project, we're suggesting episode topics.</p>
+                    <p class="text-sm text-muted mb-3">Based on your project${style ? ' and style' : ''}, we're suggesting episode topics.</p>
                     <div class="loading-state">
                         <div class="spinner"></div>
                         <p>Analyzing "${title}"...</p>
@@ -359,6 +369,7 @@
                 const response = await api('/api/ai/generate-topics', 'POST', {
                     title,
                     description,
+                    style,
                     numTopics: numEpisodes
                 });
 
