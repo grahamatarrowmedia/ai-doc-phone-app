@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<!-- saved from url=(0068)http://www.netlinux.org.uk/uploads/documentary-production-app-1.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentary Production App</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: #f3f4f6;
+        }
+        .container { min-height: 100vh; padding-bottom: 80px; }
+        .header { 
+            background: linear-gradient(135deg, #2563eb 0%, #9333ea 100%);
+            color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header h1 { font-size: 1.5rem; font-weight: bold; }
+        .header p { font-size: 0.875rem; opacity: 0.9; margin-top: 0.25rem; }
+        .content { padding: 1rem; }
+        .card { 
+            background: white;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .card h3 { font-size: 1.125rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .card p { color: #6b7280; font-size: 0.875rem; margin-bottom: 0.5rem; }
+        .badge { 
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .badge-blue { background: #dbeafe; color: #1e40af; }
+        .badge-green { background: #d1fae5; color: #065f46; }
+        .badge-purple { background: #e9d5ff; color: #6b21a8; }
+        .badge-orange { background: #fed7aa; color: #9a3412; }
+        .badge-gray { background: #e5e7eb; color: #374151; }
+        .stat-grid { 
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .stat-card { 
+            background: white;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .stat-number { font-size: 2rem; font-weight: bold; margin-bottom: 0.25rem; }
+        .stat-label { color: #6b7280; font-size: 0.875rem; }
+        .btn { 
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-secondary { background: #e5e7eb; color: #374151; }
+        .btn-icon { 
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.25rem;
+            color: #6b7280;
+        }
+        .btn-icon:hover { color: #2563eb; }
+        .nav { 
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-around;
+            padding: 0.5rem;
+        }
+        .nav-item { 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 0.75rem;
+            color: #6b7280;
+            min-width: 60px;
+        }
+        .nav-item.active { color: #2563eb; background: #dbeafe; }
+        .modal { 
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            z-index: 1000;
+        }
+        .modal.active { display: flex; }
+        .modal-content { 
+            background: white;
+            border-radius: 0.5rem;
+            max-width: 600px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+        .modal-header { 
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .modal-header h3 { font-size: 1.25rem; font-weight: bold; }
+        input, textarea, select { 
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            margin-bottom: 0.75rem;
+            font-size: 1rem;
+        }
+        textarea { resize: vertical; font-family: inherit; }
+        .form-actions { 
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+        .form-actions button { flex: 1; padding: 0.75rem; }
+        .item-header { 
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+        }
+        .item-actions { 
+            display: flex;
+            gap: 0.5rem;
+            margin-left: 0.5rem;
+        }
+        .episode-list { margin-top: 1rem; }
+        .episode-item { 
+            padding: 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .episode-item:last-child { border-bottom: none; }
+        .episode-item h4 { font-weight: 600; margin-bottom: 0.25rem; }
+        .episode-item p { color: #6b7280; font-size: 0.875rem; }
+        .flex { display: flex; }
+        .flex-1 { flex: 1; }
+        .gap-2 { gap: 0.5rem; }
+        .gap-3 { gap: 0.75rem; }
+        .items-center { align-items: center; }
+        .mt-2 { margin-top: 0.5rem; }
+        .mt-3 { margin-top: 0.75rem; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-3 { margin-bottom: 0.75rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .text-sm { font-size: 0.875rem; }
+        .text-xs { font-size: 0.75rem; }
+        .whitespace-pre { white-space: pre-wrap; }
+        .ai-button { 
+            background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .ai-button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .ai-section { 
+            background: linear-gradient(135deg, #f3e8ff 0%, #fce7f3 100%);
+            border: 1px solid #e9d5ff;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        .ai-input { 
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            margin-bottom: 0.75rem;
+        }
+        .ai-result { 
+            background: white;
+            padding: 1rem;
+            border-radius: 0.375rem;
+            margin-top: 0.75rem;
+            white-space: pre-wrap;
+        }
+        .loading { 
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #ffffff;
+            border-top: 2px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="container">
+            <div class="header">
+                <h1>📽️ Documentary Production</h1>
+                <p id="project-name">Apollo 11: Journey to the Moon</p>
+            </div>
+            <div class="content" id="content">
+                <div class="card">
+                    <p class="mb-2">A comprehensive documentary series exploring the historic first moon landing</p>
+                    <div class="flex gap-2 mt-3">
+                        <span class="badge badge-blue">In Production</span>
+                        <button class="ai-button" onclick="showAIModal(&#39;expand-topic&#39;, {topic: &#39;A comprehensive documentary series exploring the historic first moon landing&#39;})">
+                            ✨ Explore Ideas
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #2563eb;">4</div>
+                        <div class="stat-label">Episodes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #059669;">2</div>
+                        <div class="stat-label">Interviews</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #7c3aed;">2</div>
+                        <div class="stat-label">Shots</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #ea580c;">3</div>
+                        <div class="stat-label">Assets</div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h3 class="mb-3">Episodes Overview</h3>
+                    <div class="episode-list">
+                        
+                            <div class="episode-item">
+                                <div class="flex" style="justify-content: space-between;">
+                                    <div>
+                                        <h4>Episode 1: The Race Begins</h4>
+                                        <p>Cold War context and the space race</p>
+                                    </div>
+                                    <span class="badge badge-gray">Research</span>
+                                </div>
+                            </div>
+                        
+                            <div class="episode-item">
+                                <div class="flex" style="justify-content: space-between;">
+                                    <div>
+                                        <h4>Episode 2: Preparation</h4>
+                                        <p>Training and technical development</p>
+                                    </div>
+                                    <span class="badge badge-gray">Planning</span>
+                                </div>
+                            </div>
+                        
+                            <div class="episode-item">
+                                <div class="flex" style="justify-content: space-between;">
+                                    <div>
+                                        <h4>Episode 3: Launch</h4>
+                                        <p>The Saturn V launch and journey to the moon</p>
+                                    </div>
+                                    <span class="badge badge-gray">Planning</span>
+                                </div>
+                            </div>
+                        
+                            <div class="episode-item">
+                                <div class="flex" style="justify-content: space-between;">
+                                    <div>
+                                        <h4>Episode 4: One Small Step</h4>
+                                        <p>The lunar landing and moonwalk</p>
+                                    </div>
+                                    <span class="badge badge-gray">Planning</span>
+                                </div>
+                            </div>
+                        
+                    </div>
+                </div>
+            </div>
+            <nav class="nav" id="nav">
+                <button class="nav-item active" onclick="setTab(&#39;dashboard&#39;)">
+                    <span>📊</span>
+                    <span>Dashboard</span>
+                </button>
+            
+                <button class="nav-item " onclick="setTab(&#39;episodes&#39;)">
+                    <span>📝</span>
+                    <span>Episodes</span>
+                </button>
+            
+                <button class="nav-item " onclick="setTab(&#39;research&#39;)">
+                    <span>🔍</span>
+                    <span>Research</span>
+                </button>
+            
+                <button class="nav-item " onclick="setTab(&#39;interviews&#39;)">
+                    <span>👥</span>
+                    <span>Interviews</span>
+                </button>
+            
+                <button class="nav-item " onclick="setTab(&#39;production&#39;)">
+                    <span>🎬</span>
+                    <span>Production</span>
+                </button>
+            
+                <button class="nav-item " onclick="setTab(&#39;assets&#39;)">
+                    <span>📦</span>
+                    <span>Assets</span>
+                </button>
+            
+                <button class="nav-item " onclick="setTab(&#39;scripts&#39;)">
+                    <span>📄</span>
+                    <span>Scripts</span>
+                </button>
+            </nav>
+        </div>
+    </div>
+    
+    <!-- AI Modal -->
+    <div id="ai-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>✨ AI Assistant</h3>
+                <button onclick="closeAIModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">×</button>
+            </div>
+            <div id="ai-modal-content"></div>
+        </div>
+    </div>
+    
+    <script>
+        // AI Assistant Functions
+        let aiLoading = false;
+        
+        async function callClaudeAPI(prompt, systemPrompt = '') {
+            try {
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 1000,
+                        system: systemPrompt,
+                        messages: [
+                            { role: 'user', content: prompt }
+                        ]
+                    })
+                });
+                
+                const data = await response.json();
+                return data.content.map(item => item.type === 'text' ? item.text : '').join('\n');
+            } catch (error) {
+                console.error('AI Error:', error);
+                return 'Sorry, AI assistance is temporarily unavailable. Please try again.';
+            }
+        }
+        
+        function showAIModal(type, context = {}) {
+            const modal = document.getElementById('ai-modal');
+            const content = document.getElementById('ai-modal-content');
+            
+            let html = '';
+            
+            switch(type) {
+                case 'research':
+                    html = `
+                        <div class="ai-section">
+                            <h4 style="margin-bottom: 0.75rem; font-weight: 600;">🔍 Research Assistant</h4>
+                            <p style="margin-bottom: 1rem; color: #6b7280; font-size: 0.875rem;">
+                                Get help finding sources, contacts, and background information for your documentary.
+                            </p>
+                            <textarea id="ai-research-query" class="ai-input" rows="3" placeholder="What do you need research help with? (e.g., 'Find archives about Apollo 11', 'Who should I contact at NASA?')"></textarea>
+                            <button class="ai-button" onclick="generateResearch()" id="ai-research-btn">
+                                ✨ Get Research Help
+                            </button>
+                            <div id="ai-research-result"></div>
+                        </div>
+                    `;
+                    break;
+                    
+                case 'interview':
+                    html = `
+                        <div class="ai-section">
+                            <h4 style="margin-bottom: 0.75rem; font-weight: 600;">💬 Interview Question Generator</h4>
+                            <p style="margin-bottom: 1rem; color: #6b7280; font-size: 0.875rem;">
+                                Generate thoughtful interview questions for your subjects.
+                            </p>
+                            <input id="ai-interview-subject" class="ai-input" placeholder="Subject name (e.g., Buzz Aldrin)" />
+                            <input id="ai-interview-role" class="ai-input" placeholder="Their role (e.g., Lunar Module Pilot)" />
+                            <textarea id="ai-interview-context" class="ai-input" rows="2" placeholder="What aspects do you want to explore? (e.g., 'Landing experience, emotions, technical challenges')"></textarea>
+                            <button class="ai-button" onclick="generateInterviewQuestions()" id="ai-interview-btn">
+                                ✨ Generate Questions
+                            </button>
+                            <div id="ai-interview-result"></div>
+                        </div>
+                    `;
+                    break;
+                    
+                case 'script':
+                    html = `
+                        <div class="ai-section">
+                            <h4 style="margin-bottom: 0.75rem; font-weight: 600;">📝 Script Outline Generator</h4>
+                            <p style="margin-bottom: 1rem; color: #6b7280; font-size: 0.875rem;">
+                                Create a structured outline for your episode.
+                            </p>
+                            <input id="ai-script-title" class="ai-input" placeholder="Episode title" value="${context.title || ''}" />
+                            <textarea id="ai-script-topic" class="ai-input" rows="3" placeholder="What should this episode cover? (e.g., 'The launch sequence, crew preparation, technical systems')"></textarea>
+                            <input id="ai-script-duration" class="ai-input" placeholder="Target duration (e.g., 45 minutes)" />
+                            <button class="ai-button" onclick="generateScript()" id="ai-script-btn">
+                                ✨ Generate Outline
+                            </button>
+                            <div id="ai-script-result"></div>
+                        </div>
+                    `;
+                    break;
+                    
+                case 'shot-ideas':
+                    html = `
+                        <div class="ai-section">
+                            <h4 style="margin-bottom: 0.75rem; font-weight: 600;">🎬 Shot List Ideas</h4>
+                            <p style="margin-bottom: 1rem; color: #6b7280; font-size: 0.875rem;">
+                                Get creative shot ideas for your documentary.
+                            </p>
+                            <textarea id="ai-shot-scene" class="ai-input" rows="3" placeholder="Describe the scene or topic (e.g., 'Kennedy Space Center, modern day comparison to 1969')"></textarea>
+                            <button class="ai-button" onclick="generateShotIdeas()" id="ai-shot-btn">
+                                ✨ Get Shot Ideas
+                            </button>
+                            <div id="ai-shot-result"></div>
+                        </div>
+                    `;
+                    break;
+                    
+                case 'expand-topic':
+                    html = `
+                        <div class="ai-section">
+                            <h4 style="margin-bottom: 0.75rem; font-weight: 600;">💡 Topic Expansion</h4>
+                            <p style="margin-bottom: 1rem; color: #6b7280; font-size: 0.875rem;">
+                                Explore angles, themes, and storylines for your documentary topic.
+                            </p>
+                            <textarea id="ai-expand-topic" class="ai-input" rows="3" placeholder="What topic do you want to explore? (e.g., 'Cold War space race context')">${context.topic || ''}</textarea>
+                            <button class="ai-button" onclick="expandTopic()" id="ai-expand-btn">
+                                ✨ Expand Topic
+                            </button>
+                            <div id="ai-expand-result"></div>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            content.innerHTML = html;
+            modal.classList.add('active');
+        }
+        
+        function closeAIModal() {
+            document.getElementById('ai-modal').classList.remove('active');
+        }
+        
+        async function generateResearch() {
+            const btn = document.getElementById('ai-research-btn');
+            const resultDiv = document.getElementById('ai-research-result');
+            const query = document.getElementById('ai-research-query').value.trim();
+            
+            if (!query) {
+                alert('Please enter what you need research help with');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Researching...';
+            
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            const systemPrompt = `You are a documentary research assistant. Help find sources, archives, contacts, and background information. Be specific and actionable. Project context: ${project.title} - ${project.description}`;
+            
+            const result = await callClaudeAPI(query, systemPrompt);
+            
+            resultDiv.innerHTML = `
+                <div class="ai-result">
+                    ${result}
+                    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
+                        <button class="btn btn-primary" onclick="saveAsResearch('${query}', \`${result.replace(/`/g, '\\`')}\`)">
+                            💾 Save as Research Note
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            btn.disabled = false;
+            btn.innerHTML = '✨ Get Research Help';
+        }
+        
+        async function generateInterviewQuestions() {
+            const btn = document.getElementById('ai-interview-btn');
+            const resultDiv = document.getElementById('ai-interview-result');
+            const subject = document.getElementById('ai-interview-subject').value.trim();
+            const role = document.getElementById('ai-interview-role').value.trim();
+            const context = document.getElementById('ai-interview-context').value.trim();
+            
+            if (!subject || !context) {
+                alert('Please enter the subject name and what you want to explore');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Generating...';
+            
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            const systemPrompt = `You are a documentary interview specialist. Generate thoughtful, open-ended questions that elicit detailed stories and insights. Focus on emotional moments, specific details, and unique perspectives.`;
+            const prompt = `Generate 8-10 interview questions for ${subject}, who is/was a ${role}, for a documentary about "${project.title}". Focus on: ${context}. Make questions specific, open-ended, and designed to get compelling stories.`;
+            
+            const result = await callClaudeAPI(prompt, systemPrompt);
+            
+            resultDiv.innerHTML = `
+                <div class="ai-result">
+                    ${result}
+                    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
+                        <button class="btn btn-primary" onclick="saveAsInterview('${subject}', '${role}', \`${result.replace(/`/g, '\\`')}\`)">
+                            💾 Save as Interview
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            btn.disabled = false;
+            btn.innerHTML = '✨ Generate Questions';
+        }
+        
+        async function generateScript() {
+            const btn = document.getElementById('ai-script-btn');
+            const resultDiv = document.getElementById('ai-script-result');
+            const title = document.getElementById('ai-script-title').value.trim();
+            const topic = document.getElementById('ai-script-topic').value.trim();
+            const duration = document.getElementById('ai-script-duration').value.trim();
+            
+            if (!title || !topic) {
+                alert('Please enter episode title and topics to cover');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Creating...';
+            
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            const systemPrompt = `You are a documentary scriptwriter. Create detailed episode outlines with clear acts, narrative arcs, and visual storytelling elements.`;
+            const prompt = `Create a detailed outline for a documentary episode titled "${title}" (${duration || '45 minutes'}) about: ${topic}. This is for the documentary "${project.title}". Include acts, key beats, narrative arc, and suggested visuals.`;
+            
+            const result = await callClaudeAPI(prompt, systemPrompt);
+            
+            resultDiv.innerHTML = `
+                <div class="ai-result">
+                    ${result}
+                    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
+                        <button class="btn btn-primary" onclick="saveAsScript('${title}', \`${result.replace(/`/g, '\\`')}\`)">
+                            💾 Save as Script
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            btn.disabled = false;
+            btn.innerHTML = '✨ Generate Outline';
+        }
+        
+        async function generateShotIdeas() {
+            const btn = document.getElementById('ai-shot-btn');
+            const resultDiv = document.getElementById('ai-shot-result');
+            const scene = document.getElementById('ai-shot-scene').value.trim();
+            
+            if (!scene) {
+                alert('Please describe the scene or topic');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Creating...';
+            
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            const systemPrompt = `You are a documentary cinematographer. Suggest creative, visually compelling shot ideas with specific camera movements, angles, and equipment.`;
+            const prompt = `Suggest 5-7 creative shots for: ${scene}. This is for "${project.title}". Include camera angles, movements, equipment needed, and why each shot would be compelling.`;
+            
+            const result = await callClaudeAPI(prompt, systemPrompt);
+            
+            resultDiv.innerHTML = `<div class="ai-result">${result}</div>`;
+            
+            btn.disabled = false;
+            btn.innerHTML = '✨ Get Shot Ideas';
+        }
+        
+        async function expandTopic() {
+            const btn = document.getElementById('ai-expand-btn');
+            const resultDiv = document.getElementById('ai-expand-result');
+            const topic = document.getElementById('ai-expand-topic').value.trim();
+            
+            if (!topic) {
+                alert('Please enter a topic to explore');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Analyzing...';
+            
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            const systemPrompt = `You are a documentary story consultant. Help explore topics by suggesting angles, themes, narrative approaches, and key elements to investigate.`;
+            const prompt = `Explore potential angles and approaches for covering "${topic}" in the documentary "${project.title}". Suggest themes, storylines, key questions to answer, and unique perspectives.`;
+            
+            const result = await callClaudeAPI(prompt, systemPrompt);
+            
+            resultDiv.innerHTML = `<div class="ai-result">${result}</div>`;
+            
+            btn.disabled = false;
+            btn.innerHTML = '✨ Expand Topic';
+        }
+        
+        // Save AI results
+        function saveAsResearch(title, content) {
+            const newItem = {
+                id: Date.now().toString(),
+                projectId: state.selectedProject,
+                title: title.substring(0, 100),
+                content: content,
+                category: 'General',
+                createdAt: new Date().toISOString()
+            };
+            state.research.push(newItem);
+            saveAll();
+            closeAIModal();
+            state.activeTab = 'research';
+            renderNav();
+            render();
+        }
+        
+        function saveAsInterview(subject, role, questions) {
+            const newItem = {
+                id: Date.now().toString(),
+                projectId: state.selectedProject,
+                subject: subject,
+                role: role,
+                status: 'Potential',
+                questions: questions,
+                notes: 'Generated by AI',
+                createdAt: new Date().toISOString()
+            };
+            state.interviews.push(newItem);
+            saveAll();
+            closeAIModal();
+            state.activeTab = 'interviews';
+            renderNav();
+            render();
+        }
+        
+        function saveAsScript(title, content) {
+            const newItem = {
+                id: Date.now().toString(),
+                projectId: state.selectedProject,
+                title: title,
+                content: content,
+                lastEdited: new Date().toISOString()
+            };
+            state.scripts.push(newItem);
+            saveAll();
+            closeAIModal();
+            state.activeTab = 'scripts';
+            renderNav();
+            render();
+        }
+        
+        // Storage wrapper
+        const storage = {
+            get: (key) => {
+                const data = localStorage.getItem(key);
+                return data ? JSON.parse(data) : null;
+            },
+            set: (key, value) => {
+                localStorage.setItem(key, JSON.stringify(value));
+            }
+        };
+
+        // App state
+        let state = {
+            activeTab: 'dashboard',
+            projects: [],
+            episodes: [],
+            research: [],
+            interviews: [],
+            shots: [],
+            assets: [],
+            scripts: [],
+            selectedProject: null,
+            editingItem: null
+        };
+
+        // Initialize app
+        function init() {
+            loadData();
+            renderNav();
+            render();
+        }
+
+        // Load data from storage
+        function loadData() {
+            const savedProjects = storage.get('projects');
+            
+            if (!savedProjects) {
+                // Initialize with example data
+                state.projects = [{
+                    id: '1',
+                    title: 'Apollo 11: Journey to the Moon',
+                    description: 'A comprehensive documentary series exploring the historic first moon landing',
+                    status: 'In Production'
+                }];
+                
+                state.episodes = [
+                    { id: '1', projectId: '1', title: 'Episode 1: The Race Begins', description: 'Cold War context and the space race', status: 'Research', duration: '45 min' },
+                    { id: '2', projectId: '1', title: 'Episode 2: Preparation', description: 'Training and technical development', status: 'Planning', duration: '45 min' },
+                    { id: '3', projectId: '1', title: 'Episode 3: Launch', description: 'The Saturn V launch and journey to the moon', status: 'Planning', duration: '45 min' },
+                    { id: '4', projectId: '1', title: 'Episode 4: One Small Step', description: 'The lunar landing and moonwalk', status: 'Planning', duration: '45 min' }
+                ];
+                
+                state.research = [
+                    { id: '1', projectId: '1', title: 'NASA Archives Access', content: 'Contact: Dr. Sarah Mitchell at NASA History Office. Available footage includes mission control audio, cockpit recordings, and technical schematics.', category: 'Archive' },
+                    { id: '2', projectId: '1', title: 'Cold War Context Research', content: 'Key sources: "The Right Stuff" by Tom Wolfe, Smithsonian Air & Space Museum archives, Kennedy Space Center historical records.', category: 'Background' }
+                ];
+                
+                state.interviews = [
+                    { id: '1', projectId: '1', subject: 'Buzz Aldrin', role: 'Lunar Module Pilot', status: 'Confirmed', questions: 'What were your thoughts during descent?\nDescribe the moment of landing.\nWhat did the lunar surface feel like?', notes: 'Available for 2-hour interview in Los Angeles' },
+                    { id: '2', projectId: '1', subject: 'Gene Kranz', role: 'Flight Director', status: 'Requested', questions: 'Describe mission control during landing.\nWhat was the most critical moment?\nHow did the team prepare?', notes: 'Contact through NASA public affairs' }
+                ];
+                
+                state.shots = [
+                    { id: '1', projectId: '1', episodeId: '1', description: 'Kennedy Space Center launch pads - modern day', location: 'KSC, Florida', equipment: '4K drone, cinema camera', status: 'Scheduled', shootDate: '2026-03-15' },
+                    { id: '2', projectId: '1', episodeId: '3', description: 'Saturn V rocket at Space Center Houston', location: 'Houston, TX', equipment: 'Gimbal, 4K camera', status: 'Pending' }
+                ];
+                
+                state.assets = [
+                    { id: '1', projectId: '1', title: 'Original Mission Control Audio', type: 'Audio', source: 'NASA Archives', status: 'Acquired', notes: 'Full 8-day mission audio, needs editing' },
+                    { id: '2', projectId: '1', title: 'Apollo 11 Launch Footage', type: 'Video', source: 'NASA/CBS News Archives', status: 'Licensing', notes: 'Multiple camera angles, 16mm film transfer' },
+                    { id: '3', projectId: '1', title: 'Lunar Surface Photos', type: 'Image', source: 'NASA/Hasselblad', status: 'Acquired', notes: 'High-res scans of original photos' }
+                ];
+                
+                state.scripts = [
+                    { id: '1', projectId: '1', episodeId: '1', title: 'Episode 1 Outline', content: 'ACT 1: COLD WAR CONTEXT\n- Sputnik shock (1957)\n- Kennedy\'s moon speech (1961)\n- Early Mercury/Gemini programs\n\nACT 2: THE APOLLO PROGRAM\n- Tragedy of Apollo 1\n- Technical challenges\n- Team assembly\n\nACT 3: APOLLO 11 CREW\n- Armstrong, Aldrin, Collins selection\n- Training montage\n- Mission objectives', lastEdited: new Date().toISOString() }
+                ];
+                
+                state.selectedProject = '1';
+                saveAll();
+            } else {
+                state.projects = savedProjects;
+                state.episodes = storage.get('episodes') || [];
+                state.research = storage.get('research') || [];
+                state.interviews = storage.get('interviews') || [];
+                state.shots = storage.get('shots') || [];
+                state.assets = storage.get('assets') || [];
+                state.scripts = storage.get('scripts') || [];
+                state.selectedProject = state.projects[0]?.id || null;
+            }
+        }
+
+        // Save all data
+        function saveAll() {
+            storage.set('projects', state.projects);
+            storage.set('episodes', state.episodes);
+            storage.set('research', state.research);
+            storage.set('interviews', state.interviews);
+            storage.set('shots', state.shots);
+            storage.set('assets', state.assets);
+            storage.set('scripts', state.scripts);
+        }
+
+        // Render navigation
+        function renderNav() {
+            const navItems = [
+                { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+                { id: 'episodes', icon: '📝', label: 'Episodes' },
+                { id: 'research', icon: '🔍', label: 'Research' },
+                { id: 'interviews', icon: '👥', label: 'Interviews' },
+                { id: 'production', icon: '🎬', label: 'Production' },
+                { id: 'assets', icon: '📦', label: 'Assets' },
+                { id: 'scripts', icon: '📄', label: 'Scripts' }
+            ];
+            
+            const navHtml = navItems.map(item => `
+                <button class="nav-item ${state.activeTab === item.id ? 'active' : ''}" onclick="setTab('${item.id}')">
+                    <span>${item.icon}</span>
+                    <span>${item.label}</span>
+                </button>
+            `).join('');
+            
+            document.getElementById('nav').innerHTML = navHtml;
+        }
+
+        // Set active tab
+        function setTab(tab) {
+            state.activeTab = tab;
+            renderNav();
+            render();
+        }
+
+        // Main render function
+        function render() {
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            document.getElementById('project-name').textContent = project?.title || 'No Project';
+            
+            const content = document.getElementById('content');
+            
+            switch(state.activeTab) {
+                case 'dashboard':
+                    content.innerHTML = renderDashboard();
+                    break;
+                case 'episodes':
+                    content.innerHTML = renderEpisodes();
+                    break;
+                case 'research':
+                    content.innerHTML = renderResearch();
+                    break;
+                case 'interviews':
+                    content.innerHTML = renderInterviews();
+                    break;
+                case 'production':
+                    content.innerHTML = renderProduction();
+                    break;
+                case 'assets':
+                    content.innerHTML = renderAssets();
+                    break;
+                case 'scripts':
+                    content.innerHTML = renderScripts();
+                    break;
+            }
+        }
+
+        // Render dashboard
+        function renderDashboard() {
+            const project = state.projects.find(p => p.id === state.selectedProject);
+            if (!project) return '<div class="card">No project selected</div>';
+            
+            const episodes = state.episodes.filter(e => e.projectId === state.selectedProject);
+            const interviews = state.interviews.filter(i => i.projectId === state.selectedProject);
+            const shots = state.shots.filter(s => s.projectId === state.selectedProject);
+            const assets = state.assets.filter(a => a.projectId === state.selectedProject);
+            
+            return `
+                <div class="card">
+                    <p class="mb-2">${project.description}</p>
+                    <div class="flex gap-2 mt-3">
+                        <span class="badge badge-blue">${project.status}</span>
+                        <button class="ai-button" onclick="showAIModal('expand-topic', {topic: '${project.description}'})">
+                            ✨ Explore Ideas
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #2563eb;">${episodes.length}</div>
+                        <div class="stat-label">Episodes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #059669;">${interviews.length}</div>
+                        <div class="stat-label">Interviews</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #7c3aed;">${shots.length}</div>
+                        <div class="stat-label">Shots</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: #ea580c;">${assets.length}</div>
+                        <div class="stat-label">Assets</div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h3 class="mb-3">Episodes Overview</h3>
+                    <div class="episode-list">
+                        ${episodes.map(ep => `
+                            <div class="episode-item">
+                                <div class="flex" style="justify-content: space-between;">
+                                    <div>
+                                        <h4>${ep.title}</h4>
+                                        <p>${ep.description}</p>
+                                    </div>
+                                    <span class="badge badge-gray">${ep.status}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render episodes
+        function renderEpisodes() {
+            const episodes = state.episodes.filter(e => e.projectId === state.selectedProject);
+            
+            return `
+                <div class="flex mb-4" style="justify-content: space-between; align-items: center;">
+                    <h2 style="font-size: 1.5rem; font-weight: bold;">Episodes</h2>
+                    <button class="btn btn-primary" onclick="showAddModal('episode')">+ Add</button>
+                </div>
+                ${episodes.map(ep => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <h3>${ep.title}</h3>
+                                <p>${ep.description}</p>
+                                <div class="flex gap-2 mt-2 text-sm" style="color: #6b7280;">
+                                    <span>${ep.duration}</span>
+                                    <span class="badge badge-gray">${ep.status}</span>
+                                </div>
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick='editItem("episode", ${JSON.stringify(ep)})'>✏️</button>
+                                <button class="btn-icon" onclick='deleteItem("episode", "${ep.id}")'>🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        // Render research
+        function renderResearch() {
+            const research = state.research.filter(r => r.projectId === state.selectedProject);
+            
+            return `
+                <div class="flex mb-4" style="justify-content: space-between; align-items: center;">
+                    <h2 style="font-size: 1.5rem; font-weight: bold;">Research</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('research')">✨ AI Research</button>
+                        <button class="btn btn-primary" onclick="showAddModal('research')">+ Add</button>
+                    </div>
+                </div>
+                ${research.map(r => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <div class="flex gap-2 mb-1 items-center">
+                                    <h3>${r.title}</h3>
+                                    <span class="badge badge-blue">${r.category}</span>
+                                </div>
+                                <p class="whitespace-pre">${r.content}</p>
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick='editItem("research", ${JSON.stringify(r)})'>✏️</button>
+                                <button class="btn-icon" onclick='deleteItem("research", "${r.id}")'>🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        // Render interviews
+        function renderInterviews() {
+            const interviews = state.interviews.filter(i => i.projectId === state.selectedProject);
+            
+            return `
+                <div class="flex mb-4" style="justify-content: space-between; align-items: center;">
+                    <h2 style="font-size: 1.5rem; font-weight: bold;">Interviews</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('interview')">✨ AI Questions</button>
+                        <button class="btn btn-primary" onclick="showAddModal('interview')">+ Add</button>
+                    </div>
+                </div>
+                ${interviews.map(i => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <h3>${i.subject}</h3>
+                                <p>${i.role}</p>
+                                <span class="badge badge-green mt-2">${i.status}</span>
+                                ${i.questions ? `
+                                    <div class="mt-3">
+                                        <div class="text-sm" style="font-weight: 600; margin-bottom: 0.25rem;">Questions:</div>
+                                        <div class="text-sm whitespace-pre">${i.questions}</div>
+                                    </div>
+                                ` : ''}
+                                ${i.notes ? `<div class="mt-2 text-sm" style="font-style: italic; color: #6b7280;">${i.notes}</div>` : ''}
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick='editItem("interview", ${JSON.stringify(i)})'>✏️</button>
+                                <button class="btn-icon" onclick='deleteItem("interview", "${i.id}")'>🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        // Render production
+        function renderProduction() {
+            const shots = state.shots.filter(s => s.projectId === state.selectedProject);
+            const episodes = state.episodes.filter(e => e.projectId === state.selectedProject);
+            
+            return `
+                <div class="flex mb-4" style="justify-content: space-between; align-items: center;">
+                    <h2 style="font-size: 1.5rem; font-weight: bold;">Production</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('shot-ideas')">✨ Shot Ideas</button>
+                        <button class="btn btn-primary" onclick="showAddModal('shot')">+ Add</button>
+                    </div>
+                </div>
+                ${shots.map(s => {
+                    const episode = episodes.find(e => e.id === s.episodeId);
+                    return `
+                        <div class="card">
+                            <div class="item-header">
+                                <div class="flex-1">
+                                    ${episode ? `<div class="text-xs mb-1" style="color: #2563eb;">${episode.title}</div>` : ''}
+                                    <p style="font-weight: 600;">${s.description}</p>
+                                    <div class="text-sm mt-1" style="color: #6b7280;">
+                                        <div>📍 ${s.location}</div>
+                                        <div>🎥 ${s.equipment}</div>
+                                        ${s.shootDate ? `<div>📅 ${new Date(s.shootDate).toLocaleDateString()}</div>` : ''}
+                                    </div>
+                                    <span class="badge badge-purple mt-2">${s.status}</span>
+                                </div>
+                                <div class="item-actions">
+                                    <button class="btn-icon" onclick='editItem("shot", ${JSON.stringify(s)})'>✏️</button>
+                                    <button class="btn-icon" onclick='deleteItem("shot", "${s.id}")'>🗑️</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            `;
+        }
+
+        // Render assets
+        function renderAssets() {
+            const assets = state.assets.filter(a => a.projectId === state.selectedProject);
+            
+            return `
+                <div class="flex mb-4" style="justify-content: space-between; align-items: center;">
+                    <h2 style="font-size: 1.5rem; font-weight: bold;">Assets</h2>
+                    <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
+                </div>
+                ${assets.map(a => `
+                    <div class="card">
+                        <div class="item-header">
+                            <div class="flex-1">
+                                <div class="flex gap-2 mb-1 items-center">
+                                    <h3>${a.title}</h3>
+                                    <span class="badge badge-gray">${a.type}</span>
+                                </div>
+                                <p class="text-sm">Source: ${a.source}</p>
+                                <span class="badge badge-orange mt-2">${a.status}</span>
+                                ${a.notes ? `<p class="text-sm mt-2">${a.notes}</p>` : ''}
+                            </div>
+                            <div class="item-actions">
+                                <button class="btn-icon" onclick='editItem("asset", ${JSON.stringify(a)})'>✏️</button>
+                                <button class="btn-icon" onclick='deleteItem("asset", "${a.id}")'>🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        // Render scripts
+        function renderScripts() {
+            const scripts = state.scripts.filter(s => s.projectId === state.selectedProject);
+            const episodes = state.episodes.filter(e => e.projectId === state.selectedProject);
+            
+            return `
+                <div class="flex mb-4" style="justify-content: space-between; align-items: center;">
+                    <h2 style="font-size: 1.5rem; font-weight: bold;">Scripts</h2>
+                    <div class="flex gap-2">
+                        <button class="ai-button" onclick="showAIModal('script')">✨ AI Outline</button>
+                        <button class="btn btn-primary" onclick="showAddModal('script')">+ Add</button>
+                    </div>
+                </div>
+                ${scripts.map(s => {
+                    const episode = episodes.find(e => e.id === s.episodeId);
+                    return `
+                        <div class="card">
+                            <div class="item-header">
+                                <div class="flex-1">
+                                    ${episode ? `<div class="text-xs mb-1" style="color: #2563eb;">${episode.title}</div>` : ''}
+                                    <h3>${s.title}</h3>
+                                    <p class="text-xs mb-2" style="color: #6b7280;">Last edited: ${new Date(s.lastEdited).toLocaleDateString()}</p>
+                                    <div style="background: #f9fafb; padding: 0.75rem; border-radius: 0.375rem; font-size: 0.875rem; white-space: pre-wrap; font-family: monospace;">${s.content}</div>
+                                </div>
+                                <div class="item-actions">
+                                    <button class="btn-icon" onclick='editItem("script", ${JSON.stringify(s)})'>✏️</button>
+                                    <button class="btn-icon" onclick='deleteItem("script", "${s.id}")'>🗑️</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            `;
+        }
+
+        // Show add modal
+        function showAddModal(type) {
+            alert(`Add ${type} feature - Coming in next update! For now, you can edit the example data.`);
+        }
+
+        // Edit item
+        function editItem(type, item) {
+            alert(`Edit ${type} feature - Coming in next update! For now, you can view the ${type} details.`);
+        }
+
+        // Delete item
+        function deleteItem(type, id) {
+            if (!confirm('Are you sure you want to delete this item?')) return;
+            
+            switch(type) {
+                case 'episode':
+                    state.episodes = state.episodes.filter(e => e.id !== id);
+                    break;
+                case 'research':
+                    state.research = state.research.filter(r => r.id !== id);
+                    break;
+                case 'interview':
+                    state.interviews = state.interviews.filter(i => i.id !== id);
+                    break;
+                case 'shot':
+                    state.shots = state.shots.filter(s => s.id !== id);
+                    break;
+                case 'asset':
+                    state.assets = state.assets.filter(a => a.id !== id);
+                    break;
+                case 'script':
+                    state.scripts = state.scripts.filter(s => s.id !== id);
+                    break;
+            }
+            
+            saveAll();
+            render();
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+
+</body></html>
