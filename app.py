@@ -14,7 +14,7 @@ from flask import Flask, render_template, request, jsonify, Response
 from google.cloud import firestore, storage
 from weasyprint import HTML
 import vertexai
-from vertexai.generative_models import GenerativeModel
+from vertexai.generative_models import GenerativeModel, Tool, grounding
 
 app = Flask(__name__)
 
@@ -108,6 +108,45 @@ def generate_ai_response(prompt, system_prompt=""):
         return response.text
     except Exception as e:
         return f"AI error: {str(e)}"
+
+
+def generate_grounded_research(prompt, system_prompt=""):
+    """Generate AI response with Google Search grounding for verified research."""
+    try:
+        # Create a model with Google Search grounding
+        grounded_model = GenerativeModel(
+            MODEL_NAME,
+            tools=[Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())]
+        )
+
+        full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+        response = grounded_model.generate_content(full_prompt)
+
+        # Extract grounding metadata (sources used)
+        grounding_metadata = []
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+                gm = candidate.grounding_metadata
+                if hasattr(gm, 'grounding_chunks'):
+                    for chunk in gm.grounding_chunks:
+                        if hasattr(chunk, 'web') and chunk.web:
+                            grounding_metadata.append({
+                                'uri': chunk.web.uri if hasattr(chunk.web, 'uri') else '',
+                                'title': chunk.web.title if hasattr(chunk.web, 'title') else ''
+                            })
+
+        return {
+            'text': response.text,
+            'sources': grounding_metadata
+        }
+    except Exception as e:
+        print(f"Grounded research error: {e}")
+        # Fallback to regular generation
+        return {
+            'text': generate_ai_response(prompt, system_prompt),
+            'sources': []
+        }
 
 
 # ============== Source Document Functions ==============
@@ -883,13 +922,20 @@ IMPORTANT:
 
 Generate thorough, VERIFIED, production-ready research with source URLs."""
 
-    result = generate_ai_response(prompt, system_prompt)
+    # Use Google Search grounding for real, verified sources
+    grounded_result = generate_grounded_research(prompt, system_prompt)
+    result = grounded_result['text']
+    grounded_sources = grounded_result.get('sources', [])
 
-    response_data = {"result": result, "saved": False, "sources": []}
+    response_data = {"result": result, "saved": False, "sources": [], "groundedSources": grounded_sources}
 
-    # Extract URLs and download source documents synchronously
-    # Limit to 3 downloads to avoid timeout (30 sec per download = 90 sec max)
+    # Combine URLs from AI response and grounding metadata
     urls = extract_urls(result)
+    # Add URLs from grounding sources (these are verified by Google Search)
+    for gs in grounded_sources:
+        if gs.get('uri') and gs['uri'] not in urls:
+            urls.insert(0, gs['uri'])  # Prioritize grounded sources
+
     if urls and project_id:
         research_id = f"ep_{episode_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         response_data["researchId"] = research_id
