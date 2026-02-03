@@ -1241,7 +1241,7 @@ def save_episode_research(episode_id):
         # Download links synchronously (Cloud Run terminates idle instances)
         downloads_completed = 0
         downloads_failed = 0
-        MAX_DOWNLOADS = 10  # Limit to avoid request timeout
+        MAX_DOWNLOADS = 5  # Limit to avoid Cloud Run request timeout
 
         if links_to_download:
             print(f"[DEBUG] Downloading up to {MAX_DOWNLOADS} of {len(links_to_download)} links")
