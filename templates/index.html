@@ -1091,6 +1091,30 @@
             }
         }
 
+        // Convert plain URLs in text to clickable anchor tags
+        function makeLinksClickable(text) {
+            // First, escape HTML to prevent XSS
+            let escaped = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Convert URLs to anchor tags
+            // Match URLs that start with http:// or https://
+            const urlPattern = /(https?:\/\/[^\s<>\[\]()\"\']+)/g;
+
+            escaped = escaped.replace(urlPattern, (url) => {
+                // Clean up trailing punctuation that's not part of URL
+                let cleanUrl = url.replace(/[.,;:!?\)]+$/, '');
+                return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>`;
+            });
+
+            // Convert newlines to <br> for proper display
+            escaped = escaped.replace(/\n/g, '<br>');
+
+            return escaped;
+        }
+
         async function doSimpleResearch(title, description) {
             const modal = document.getElementById('ai-modal');
             const content = document.getElementById('ai-modal-content');
@@ -1114,11 +1138,14 @@
                 });
 
                 if (response.result) {
+                    // Convert the plain text response to HTML with clickable links
+                    const htmlContent = makeLinksClickable(response.result);
+
                     content.innerHTML = `
                         <div class="ai-section">
                             <h4>🔍 Research: ${title}</h4>
                             <div class="ai-result research-result-content">
-                                ${marked.parse(response.result)}
+                                ${htmlContent}
                             </div>
                             <div class="ai-actions mt-4">
                                 <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
