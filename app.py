@@ -1092,10 +1092,44 @@ Return ONLY the JSON object as specified."""
 
         # Clean control characters that break JSON parsing
         import re
-        # Remove control characters except newlines and tabs
+        # Remove all ASCII control characters except newline, tab, carriage return
         cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', cleaned)
-        # Fix escaped newlines in strings (convert actual newlines in JSON strings to \n)
-        # This handles cases where the AI puts literal newlines inside JSON string values
+        # Also remove extended control characters (0x80-0x9f)
+        cleaned = re.sub(r'[\x80-\x9f]', '', cleaned)
+
+        # Fix unescaped newlines inside JSON string values
+        # This is a common issue when AI generates long text content
+        def fix_json_strings(json_str):
+            """Fix newlines inside JSON string values by properly escaping them."""
+            result = []
+            in_string = False
+            escape_next = False
+
+            for char in json_str:
+                if escape_next:
+                    result.append(char)
+                    escape_next = False
+                elif char == '\\':
+                    result.append(char)
+                    escape_next = True
+                elif char == '"':
+                    result.append(char)
+                    in_string = not in_string
+                elif char == '\n' and in_string:
+                    # Newline inside string - escape it
+                    result.append('\\n')
+                elif char == '\r' and in_string:
+                    # Carriage return inside string - escape it
+                    result.append('\\r')
+                elif char == '\t' and in_string:
+                    # Tab inside string - escape it
+                    result.append('\\t')
+                else:
+                    result.append(char)
+
+            return ''.join(result)
+
+        cleaned = fix_json_strings(cleaned)
 
         blueprint = json.loads(cleaned)
 
