@@ -1004,16 +1004,13 @@ Generate thorough, VERIFIED, production-ready research with source URLs."""
         research_id = f"ep_{episode_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         response_data["researchId"] = research_id
 
-        # Validate URLs before downloading (limited to prevent timeout)
-        print(f"Validating URLs (checking up to 5)...")
-        valid_urls = filter_valid_urls(urls, max_to_check=5)
-        print(f"Found {len(valid_urls)} valid URLs")
-
-        # Download valid sources synchronously (limited to prevent timeout)
+        # Download sources directly (skip validation to save time)
+        # Failed downloads will be marked as errors
         MAX_SYNC_DOWNLOADS = 3
         ensure_bucket_exists(STORAGE_BUCKET)
         downloaded_sources = []
-        for url in valid_urls[:MAX_SYNC_DOWNLOADS]:
+        print(f"Downloading up to {MAX_SYNC_DOWNLOADS} sources...")
+        for url in urls[:MAX_SYNC_DOWNLOADS]:
             try:
                 result_download = download_and_store(url, STORAGE_BUCKET, project_id, research_id)
                 downloaded_sources.append({
@@ -1026,8 +1023,8 @@ Generate thorough, VERIFIED, production-ready research with source URLs."""
             except Exception as e:
                 downloaded_sources.append({"url": url, "status": "error", "error": str(e)})
 
-        # Mark remaining valid URLs as pending (not downloaded yet)
-        for url in valid_urls[MAX_SYNC_DOWNLOADS:]:
+        # Mark remaining URLs as pending (not downloaded yet)
+        for url in urls[MAX_SYNC_DOWNLOADS:]:
             downloaded_sources.append({"url": url, "status": "pending"})
 
         response_data["sources"] = downloaded_sources
