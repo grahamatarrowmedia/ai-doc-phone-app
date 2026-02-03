@@ -956,6 +956,11 @@ def ai_simple_research():
     data = request.get_json()
     title = data.get('title', '')
     description = data.get('description', '')
+    episode_id = data.get('episodeId', '')
+    project_id = data.get('projectId', '')
+    save_research = data.get('save', True)
+
+    print(f"[DEBUG] simple-research called: title={title}, episodeId={episode_id}, projectId={project_id}, save={save_research}")
 
     prompt = f"""I have a documentary episode which is called "{title}": {description}
 
@@ -972,10 +977,77 @@ Format your response with:
 
     result = generate_ai_response(prompt, system_prompt)
 
-    return jsonify({
+    print(f"[DEBUG] AI response length: {len(result)} chars")
+
+    response_data = {
         "result": result,
-        "title": title
-    })
+        "title": title,
+        "saved": False
+    }
+
+    # Save research to episode if episodeId provided
+    if save_research and episode_id and project_id:
+        try:
+            print(f"[DEBUG] Saving research to episode {episode_id}")
+            # Update the episode with the research content
+            episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+            episode_ref.update({
+                'research': result,
+                'researchGeneratedAt': datetime.utcnow().isoformat(),
+                'updatedAt': datetime.utcnow().isoformat()
+            })
+            response_data['saved'] = True
+            response_data['episodeId'] = episode_id
+            print(f"[DEBUG] Research saved successfully to episode {episode_id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save research: {e}")
+            response_data['saveError'] = str(e)
+
+    return jsonify(response_data)
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["GET"])
+def get_episode_research(episode_id):
+    """Get saved research for an episode."""
+    print(f"[DEBUG] Getting research for episode {episode_id}")
+    try:
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            print(f"[DEBUG] Episode {episode_id} not found")
+            return jsonify({"error": "Episode not found"}), 404
+
+        research = episode.get('research', '')
+        generated_at = episode.get('researchGeneratedAt', '')
+
+        print(f"[DEBUG] Found research: {len(research)} chars, generated at: {generated_at}")
+
+        return jsonify({
+            "research": research,
+            "generatedAt": generated_at,
+            "episodeId": episode_id,
+            "episodeTitle": episode.get('title', '')
+        })
+    except Exception as e:
+        print(f"[ERROR] Failed to get research: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["DELETE"])
+def delete_episode_research(episode_id):
+    """Delete saved research for an episode."""
+    print(f"[DEBUG] Deleting research for episode {episode_id}")
+    try:
+        episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+        episode_ref.update({
+            'research': '',
+            'researchGeneratedAt': '',
+            'updatedAt': datetime.utcnow().isoformat()
+        })
+        print(f"[DEBUG] Research deleted for episode {episode_id}")
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"[ERROR] Failed to delete research: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/ai/interview-questions", methods=["POST"])

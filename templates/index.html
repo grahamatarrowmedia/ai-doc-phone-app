@@ -1081,11 +1081,25 @@
                             <div class="episode-research-section">
                                 <div class="episode-research-header">
                                     <span class="text-sm font-bold">Research</span>
-                                    <button class="ai-button-sm" onclick="doSimpleResearch('${ep.title.replace(/'/g, "\\'")}', '${(ep.description || '').replace(/'/g, "\\'")}')">
-                                        🔍 Research
-                                    </button>
+                                    <div class="flex gap-2">
+                                        ${ep.research ? `
+                                            <button class="btn-sm btn-secondary" onclick="viewSavedResearch('${ep.id}', '${ep.title.replace(/'/g, "\\'")}')">
+                                                📖 View Saved
+                                            </button>
+                                        ` : ''}
+                                        <button class="ai-button-sm" onclick="doSimpleResearch('${ep.id}', '${ep.title.replace(/'/g, "\\'")}', '${(ep.description || '').replace(/'/g, "\\'")}')">
+                                            🔍 ${ep.research ? 'Regenerate' : 'Research'}
+                                        </button>
+                                    </div>
                                 </div>
-                                <div id="research-result-${ep.id}" class="episode-research-result"></div>
+                                ${ep.research ? `
+                                    <div class="saved-research-indicator" onclick="viewSavedResearch('${ep.id}', '${ep.title.replace(/'/g, "\\'")}')">
+                                        <span class="badge badge-green">✓ Research saved</span>
+                                        <span class="text-xs text-muted">${ep.researchGeneratedAt ? 'Generated: ' + new Date(ep.researchGeneratedAt).toLocaleDateString() : ''}</span>
+                                    </div>
+                                ` : `
+                                    <p class="text-sm text-muted">No research saved. Click Research to generate.</p>
+                                `}
                             </div>
                         </div>
                     `;
@@ -1105,7 +1119,13 @@
             }
         }
 
-        async function doSimpleResearch(title, description) {
+        async function doSimpleResearch(episodeId, title, description) {
+            console.log('=== doSimpleResearch START ===');
+            console.log('episodeId:', episodeId);
+            console.log('title:', title);
+            console.log('description:', description);
+            console.log('state.currentProject:', state.currentProject);
+
             const modal = document.getElementById('ai-modal');
             const content = document.getElementById('ai-modal-content');
 
@@ -1113,6 +1133,7 @@
                 <div class="ai-section">
                     <h4>🔍 Researching: ${title}</h4>
                     <p class="text-sm text-muted mb-3">Gathering background research with source links...</p>
+                    <p class="text-xs text-muted">Research will be saved to this episode.</p>
                     <div class="loading-state">
                         <div class="spinner"></div>
                         <p>This may take a moment...</p>
@@ -1122,15 +1143,20 @@
             modal.classList.add('active');
 
             try {
+                console.log('Calling /api/ai/simple-research...');
                 const response = await api('/api/ai/simple-research', 'POST', {
                     title: title,
-                    description: description
+                    description: description,
+                    episodeId: episodeId,
+                    projectId: state.currentProject,
+                    save: true
                 });
 
                 console.log('=== RESEARCH API RESPONSE ===');
                 console.log('Full response:', response);
                 console.log('response.result type:', typeof response.result);
-                console.log('response.result value:', response.result);
+                console.log('response.saved:', response.saved);
+                console.log('response.episodeId:', response.episodeId);
 
                 // Get the result text
                 let resultText = response.result;
@@ -1144,15 +1170,19 @@
                 console.log('First 500 chars:', resultText.substring(0, 500));
 
                 // Use marked.parse() to convert markdown to HTML
-                // The custom renderer will make links open in new tabs
                 const htmlContent = marked.parse(resultText);
 
                 console.log('Parsed HTML length:', htmlContent.length);
                 console.log('First 500 chars of HTML:', htmlContent.substring(0, 500));
 
+                const savedMessage = response.saved
+                    ? '<p class="text-success text-sm mb-2">✓ Research saved to episode</p>'
+                    : '<p class="text-warning text-sm mb-2">⚠ Research not saved</p>';
+
                 content.innerHTML = `
                     <div class="ai-section">
                         <h4>🔍 Research: ${title}</h4>
+                        ${savedMessage}
                         <div class="ai-result research-result-content">
                             ${htmlContent}
                         </div>
@@ -1164,6 +1194,13 @@
                 `;
                 // Store result for copying
                 window.lastResearchResult = resultText;
+
+                // Reload project data to show saved research indicator
+                if (response.saved) {
+                    console.log('Research saved, reloading project data...');
+                    await loadProjectData(state.currentProject);
+                    render();
+                }
 
             } catch (error) {
                 console.error('Research error:', error);
@@ -1177,9 +1214,118 @@
             }
         }
 
+        async function viewSavedResearch(episodeId, title) {
+            console.log('=== viewSavedResearch START ===');
+            console.log('episodeId:', episodeId);
+            console.log('title:', title);
+
+            const modal = document.getElementById('ai-modal');
+            const content = document.getElementById('ai-modal-content');
+
+            content.innerHTML = `
+                <div class="ai-section">
+                    <h4>📖 Loading Research: ${title}</h4>
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <p>Loading saved research...</p>
+                    </div>
+                </div>
+            `;
+            modal.classList.add('active');
+
+            try {
+                console.log('Fetching saved research from /api/episodes/' + episodeId + '/research');
+                const response = await api('/api/episodes/' + episodeId + '/research', 'GET');
+
+                console.log('=== SAVED RESEARCH RESPONSE ===');
+                console.log('Full response:', response);
+                console.log('response.research type:', typeof response.research);
+                console.log('response.research length:', response.research ? response.research.length : 0);
+                console.log('response.generatedAt:', response.generatedAt);
+
+                const researchText = response.research;
+
+                if (!researchText) {
+                    content.innerHTML = `
+                        <div class="ai-section">
+                            <h4>📖 Research: ${title}</h4>
+                            <p class="text-muted">No research saved for this episode yet.</p>
+                            <div class="ai-actions mt-4">
+                                <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                console.log('First 500 chars of research:', researchText.substring(0, 500));
+
+                // Use marked.parse() to convert markdown to HTML with clickable links
+                const htmlContent = marked.parse(researchText);
+
+                console.log('Parsed HTML length:', htmlContent.length);
+                console.log('First 500 chars of HTML:', htmlContent.substring(0, 500));
+
+                // Check that links are in the HTML
+                const linkCount = (htmlContent.match(/<a href=/g) || []).length;
+                console.log('Number of links in HTML:', linkCount);
+
+                content.innerHTML = `
+                    <div class="ai-section">
+                        <h4>📖 Research: ${title}</h4>
+                        <p class="text-xs text-muted mb-2">Generated: ${response.generatedAt ? new Date(response.generatedAt).toLocaleString() : 'Unknown'}</p>
+                        <div class="ai-result research-result-content">
+                            ${htmlContent}
+                        </div>
+                        <div class="ai-actions mt-4">
+                            <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
+                            <button class="btn btn-primary" onclick="copyResearchToClipboard()">📋 Copy</button>
+                            <button class="btn btn-danger" onclick="deleteSavedResearch('${episodeId}', '${title.replace(/'/g, "\\'")}')">🗑️ Delete</button>
+                        </div>
+                    </div>
+                `;
+                // Store result for copying
+                window.lastResearchResult = researchText;
+
+            } catch (error) {
+                console.error('Error loading research:', error);
+                content.innerHTML = `
+                    <div class="ai-section">
+                        <h4>❌ Error</h4>
+                        <p class="text-error">Failed to load research: ${error.message}</p>
+                        <button class="btn btn-secondary mt-3" onclick="closeAIModal()">Close</button>
+                    </div>
+                `;
+            }
+        }
+
+        async function deleteSavedResearch(episodeId, title) {
+            console.log('=== deleteSavedResearch ===');
+            console.log('episodeId:', episodeId);
+
+            if (!confirm('Delete saved research for "' + title + '"?')) {
+                return;
+            }
+
+            try {
+                await api('/api/episodes/' + episodeId + '/research', 'DELETE');
+                console.log('Research deleted successfully');
+                closeAIModal();
+                await loadProjectData(state.currentProject);
+                render();
+            } catch (error) {
+                console.error('Error deleting research:', error);
+                alert('Failed to delete research: ' + error.message);
+            }
+        }
+
         function copyResearchToClipboard() {
+            console.log('=== copyResearchToClipboard ===');
+            console.log('lastResearchResult length:', window.lastResearchResult ? window.lastResearchResult.length : 0);
+
             if (window.lastResearchResult) {
                 navigator.clipboard.writeText(window.lastResearchResult).then(() => {
+                    console.log('Research copied to clipboard');
                     alert('Research copied to clipboard!');
                 }).catch(err => {
                     console.error('Failed to copy:', err);
