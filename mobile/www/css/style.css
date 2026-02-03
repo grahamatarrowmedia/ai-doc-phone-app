@@ -612,40 +612,81 @@ textarea {
     background: var(--card-bg);
 }
 
-.blueprint-video {
-    width: 100%;
-    max-height: 300px;
-    border-radius: 8px;
-    background: #000;
-}
-
-.blueprint-document {
+.blueprint-header {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 1rem;
-    padding: 1rem;
-    background: var(--hover-bg);
-    border-radius: 8px;
+    margin-bottom: 0.75rem;
 }
 
-.blueprint-icon {
-    font-size: 2rem;
+.blueprint-header h3 {
+    margin: 0;
 }
 
-.blueprint-info {
-    flex: 1;
+.blueprint-actions {
     display: flex;
-    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.blueprint-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.75rem;
+    background: var(--hover-bg);
+    border-radius: 6px;
+    font-size: 0.875rem;
 }
 
 .blueprint-filename {
     font-weight: 500;
-    font-size: 0.9375rem;
 }
 
 .blueprint-size {
-    font-size: 0.75rem;
     color: var(--text-secondary);
+}
+
+.blueprint-source {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 0.75rem;
+}
+
+.blueprint-document-content {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--hover-bg);
+    border-radius: 8px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.blueprint-rendered {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+}
+
+.blueprint-rendered h1,
+.blueprint-rendered h2,
+.blueprint-rendered h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.blueprint-rendered h1:first-child,
+.blueprint-rendered h2:first-child {
+    margin-top: 0;
+}
+
+.blueprint-rendered ul,
+.blueprint-rendered ol {
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.blueprint-rendered p {
+    margin-bottom: 0.75rem;
 }
 
 .spinner-small {

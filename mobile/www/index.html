@@ -761,25 +761,31 @@
         function renderDashboard() {
             if (!state.project) return '<div class="card">No project loaded</div>';
 
+            const sourceInfo = state.project.blueprintFile?.sourceFile
+                ? `<span class="blueprint-source">Generated from: ${state.project.blueprintFile.sourceFile}</span>`
+                : '';
+
             const blueprintSection = state.project.blueprintFile ? `
                 <div class="card blueprint-card">
-                    <h3 class="mb-3">Project Blueprint</h3>
-                    <div class="blueprint-content">
-                        ${state.project.blueprintFile.type === 'video' ? `
-                            <video controls class="blueprint-video">
-                                <source src="/api/document/${state.project.blueprintFile.path}" type="${state.project.blueprintFile.mimeType}">
-                                Your browser does not support video playback.
-                            </video>
-                        ` : `
-                            <div class="blueprint-document">
-                                <span class="blueprint-icon">📄</span>
-                                <div class="blueprint-info">
-                                    <span class="blueprint-filename">${state.project.blueprintFile.filename}</span>
-                                    <span class="blueprint-size">${formatFileSize(state.project.blueprintFile.size)}</span>
-                                </div>
-                                <a href="/api/download/${state.project.blueprintFile.path}" class="btn btn-sm btn-secondary">Download</a>
-                            </div>
-                        `}
+                    <div class="blueprint-header">
+                        <h3>Project Blueprint</h3>
+                        <div class="blueprint-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="toggleBlueprintView()">
+                                <span id="blueprint-toggle-text">View Document</span>
+                            </button>
+                            <a href="/api/download/${state.project.blueprintFile.path}" class="btn btn-sm btn-secondary">Download</a>
+                        </div>
+                    </div>
+                    <div class="blueprint-meta">
+                        <span class="blueprint-filename">📄 ${state.project.blueprintFile.filename}</span>
+                        <span class="blueprint-size">${formatFileSize(state.project.blueprintFile.size)}</span>
+                        ${sourceInfo}
+                    </div>
+                    <div id="blueprint-content" class="blueprint-document-content" style="display: none;">
+                        <div class="loading-state">
+                            <div class="spinner"></div>
+                            <p>Loading blueprint...</p>
+                        </div>
                     </div>
                 </div>
             ` : '';
@@ -837,6 +843,32 @@
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        let blueprintLoaded = false;
+        async function toggleBlueprintView() {
+            const content = document.getElementById('blueprint-content');
+            const toggleText = document.getElementById('blueprint-toggle-text');
+
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                toggleText.textContent = 'Hide Document';
+
+                // Load content if not already loaded
+                if (!blueprintLoaded && state.project.blueprintFile) {
+                    try {
+                        const response = await fetch(`/api/document/${state.project.blueprintFile.path}`);
+                        const text = await response.text();
+                        content.innerHTML = `<div class="blueprint-rendered">${marked.parse(text)}</div>`;
+                        blueprintLoaded = true;
+                    } catch (error) {
+                        content.innerHTML = `<p class="text-muted">Error loading blueprint: ${error.message}</p>`;
+                    }
+                }
+            } else {
+                content.style.display = 'none';
+                toggleText.textContent = 'View Document';
+            }
         }
 
         function renderEpisodes() {

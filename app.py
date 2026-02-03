@@ -946,7 +946,7 @@ def ai_analyze_blueprint():
     # Read file content
     file_content = file.read()
 
-    system_prompt = """You are a documentary production analyst. Analyze the provided content and extract a project blueprint.
+    system_prompt = """You are a documentary production analyst. Analyze the provided content and create a comprehensive project blueprint document.
 
 IMPORTANT: Respond ONLY with a JSON object. No markdown, no explanation, just valid JSON.
 
@@ -955,6 +955,15 @@ The JSON must have:
 - "description": A comprehensive description of what this documentary should cover (max 500 chars)
 - "style": The documentary style/approach that fits best (e.g., "investigative journalism", "observational", "personal narrative", "educational", "cinematic")
 - "episodes": An array of episode objects, each with "title", "description", and "order"
+- "blueprintDocument": A detailed markdown document (1000-2000 words) that serves as the project blueprint, including:
+  * Executive Summary
+  * Project Overview and Goals
+  * Target Audience
+  * Visual Style and Tone
+  * Key Themes to Explore
+  * Production Approach
+  * Episode Breakdown with descriptions
+  * Potential Challenges and Considerations
 
 Example response format:
 {
@@ -964,7 +973,8 @@ Example response format:
   "episodes": [
     {"title": "Episode 1 Title", "description": "What this episode covers", "order": 1},
     {"title": "Episode 2 Title", "description": "What this episode covers", "order": 2}
-  ]
+  ],
+  "blueprintDocument": "# Project Blueprint\\n\\n## Executive Summary\\n..."
 }"""
 
     try:
@@ -974,35 +984,28 @@ Example response format:
 
         # Variable to store blueprint file info
         blueprint_file = None
+        source_filename = filename
 
         if is_video:
-            # For videos, upload to GCS and use Gemini's video analysis
+            # For videos, upload temporarily to GCS for Gemini analysis
             bucket = storage_client.bucket(STORAGE_BUCKET)
             file_hash = hashlib.md5(file_content).hexdigest()
-            blob_name = f"blueprints/{file_hash}.{ext}"
-            blob = bucket.blob(blob_name)
-            blob.upload_from_string(file_content, content_type=mime_type)
+            temp_blob_name = f"temp_blueprints/{file_hash}.{ext}"
+            temp_blob = bucket.blob(temp_blob_name)
+            temp_blob.upload_from_string(file_content, content_type=mime_type)
 
-            # Store blueprint file info
-            blueprint_file = {
-                "path": blob_name,
-                "filename": filename,
-                "mimeType": mime_type,
-                "size": len(file_content),
-                "type": "video"
-            }
+            # Create URI for Gemini
+            video_uri = f"gs://{STORAGE_BUCKET}/{temp_blob_name}"
 
-            # Create a signed URL or use gs:// URI
-            video_uri = f"gs://{STORAGE_BUCKET}/{blob_name}"
+            prompt = f"""Analyze this video and create a comprehensive documentary project blueprint.
+The video is a reference, sample, or outline for a documentary project.
 
-            prompt = f"""Analyze this video and extract a documentary project blueprint.
-The video appears to be a reference, sample, or outline for a documentary project.
-
-Extract:
-1. The main topic/subject matter
-2. The narrative approach and style
-3. Key themes that should be covered
-4. Suggest {num_episodes} episode topics based on the content
+Based on what you see and hear in the video, create:
+1. A compelling project title
+2. A comprehensive description
+3. The appropriate documentary style
+4. {num_episodes} episode topics
+5. A detailed blueprint document (1000-2000 words) covering all aspects of the project
 
 Return ONLY the JSON object as specified."""
 
@@ -1011,34 +1014,30 @@ Return ONLY the JSON object as specified."""
             response = model.generate_content([system_prompt, video_part, prompt])
             result = response.text
 
+            # Delete the temporary video file after analysis
+            def cleanup_video():
+                import time
+                time.sleep(30)
+                try:
+                    temp_blob.delete()
+                except:
+                    pass
+            threading.Thread(target=cleanup_video, daemon=True).start()
+
         elif is_document:
-            # For documents, save to GCS and analyze
-            bucket = storage_client.bucket(STORAGE_BUCKET)
-            file_hash = hashlib.md5(file_content).hexdigest()
-            blob_name = f"blueprints/{file_hash}.{ext}"
-            blob = bucket.blob(blob_name)
-            blob.upload_from_string(file_content, content_type=mime_type)
-
-            # Store blueprint file info
-            blueprint_file = {
-                "path": blob_name,
-                "filename": filename,
-                "mimeType": mime_type,
-                "size": len(file_content),
-                "type": "document"
-            }
-
+            # For documents, analyze and generate a blueprint document
             if ext == 'pdf':
-                # Use PyPDF or similar - for now just send raw bytes to Gemini
+                # Use Gemini to analyze PDF
                 doc_part = Part.from_data(file_content, mime_type='application/pdf')
-                prompt = f"""Analyze this PDF document and extract a documentary project blueprint.
+                prompt = f"""Analyze this PDF document and create a comprehensive documentary project blueprint.
 The document contains information about a documentary project or subject matter.
 
-Extract:
-1. The main topic/subject matter
-2. The suggested narrative approach and style
-3. Key themes that should be covered
-4. Suggest {num_episodes} episode topics based on the content
+Based on the content, create:
+1. A compelling project title
+2. A comprehensive description
+3. The appropriate documentary style
+4. {num_episodes} episode topics
+5. A detailed blueprint document (1000-2000 words) covering all aspects of the project
 
 Return ONLY the JSON object as specified."""
 
@@ -1051,16 +1050,17 @@ Return ONLY the JSON object as specified."""
                 except:
                     text_content = file_content.decode('latin-1')
 
-                prompt = f"""Analyze this document and extract a documentary project blueprint.
+                prompt = f"""Analyze this document and create a comprehensive documentary project blueprint.
 
 DOCUMENT CONTENT:
 {text_content[:50000]}
 
-Extract:
-1. The main topic/subject matter
-2. The suggested narrative approach and style
-3. Key themes that should be covered
-4. Suggest {num_episodes} episode topics based on the content
+Based on the content, create:
+1. A compelling project title
+2. A comprehensive description
+3. The appropriate documentary style
+4. {num_episodes} episode topics
+5. A detailed blueprint document (1000-2000 words) covering all aspects of the project
 
 Return ONLY the JSON object as specified."""
 
@@ -1076,9 +1076,39 @@ Return ONLY the JSON object as specified."""
 
         blueprint = json.loads(cleaned)
 
-        # Include blueprint file info if saved
-        if blueprint_file:
-            blueprint["blueprintFile"] = blueprint_file
+        # Save the blueprint document to GCS
+        blueprint_doc_content = blueprint.get('blueprintDocument', '')
+        if not blueprint_doc_content:
+            # Generate a basic document if not provided
+            blueprint_doc_content = f"""# {blueprint.get('title', 'Documentary Project')}
+
+## Project Overview
+{blueprint.get('description', '')}
+
+## Documentary Style
+{blueprint.get('style', 'Documentary')}
+
+## Episodes
+"""
+            for ep in blueprint.get('episodes', []):
+                blueprint_doc_content += f"\n### Episode {ep.get('order', '')}: {ep.get('title', '')}\n{ep.get('description', '')}\n"
+
+        # Save blueprint document to GCS
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        doc_hash = hashlib.md5(blueprint_doc_content.encode()).hexdigest()
+        doc_blob_name = f"blueprints/{doc_hash}_blueprint.md"
+        doc_blob = bucket.blob(doc_blob_name)
+        doc_blob.upload_from_string(blueprint_doc_content.encode('utf-8'), content_type='text/markdown')
+
+        # Create blueprint file info for the document
+        blueprint["blueprintFile"] = {
+            "path": doc_blob_name,
+            "filename": f"{blueprint.get('title', 'Blueprint')[:50]}_blueprint.md",
+            "mimeType": "text/markdown",
+            "size": len(blueprint_doc_content.encode('utf-8')),
+            "type": "document",
+            "sourceFile": source_filename if is_video else None
+        }
 
         return jsonify({"blueprint": blueprint})
 
