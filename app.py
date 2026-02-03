@@ -1105,30 +1105,89 @@ Return ONLY the JSON array, no other text."""
         return jsonify({"topics": [], "raw": result, "error": str(e)})
 
 
+@app.route("/api/upload/signed-url", methods=["POST"])
+def get_signed_upload_url():
+    """Generate a signed URL for direct upload to GCS (supports large files)."""
+    from datetime import timedelta
+
+    data = request.get_json()
+    filename = data.get('filename', 'upload')
+    content_type = data.get('contentType', 'application/octet-stream')
+    file_size = data.get('fileSize', 0)
+
+    # Generate unique blob name
+    file_hash = hashlib.md5(f"{filename}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:12]
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    blob_name = f"uploads/{file_hash}.{ext}"
+
+    try:
+        ensure_bucket_exists(STORAGE_BUCKET)
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(blob_name)
+
+        # Generate signed URL for upload (valid for 30 minutes)
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=30),
+            method="PUT",
+            content_type=content_type
+        )
+
+        return jsonify({
+            "uploadUrl": signed_url,
+            "gcsUri": f"gs://{STORAGE_BUCKET}/{blob_name}",
+            "blobPath": blob_name,
+            "expiresIn": 1800  # 30 minutes
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate upload URL: {str(e)}"}), 500
+
+
 @app.route("/api/ai/analyze-blueprint", methods=["POST"])
 def ai_analyze_blueprint():
-    """Analyze an uploaded document or video to extract project blueprint."""
+    """Analyze an uploaded document or video to extract project blueprint.
+
+    Supports two modes:
+    1. Direct file upload (for small files < 32MB)
+    2. GCS URI (for large files uploaded via signed URL)
+    """
     import json
     import tempfile
     import mimetypes
     from vertexai.generative_models import Part
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    # Check for GCS URI (for large files uploaded directly to GCS)
+    gcs_uri = None
+    if request.is_json:
+        data = request.get_json()
+        gcs_uri = data.get('gcsUri')
+        num_episodes = int(data.get('numEpisodes', 5))
+        filename = data.get('filename', 'video.mp4')
+    else:
+        num_episodes = int(request.form.get('numEpisodes', 5))
+        gcs_uri = request.form.get('gcsUri')
+        filename = request.form.get('filename', '')
 
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
+    # Mode 1: GCS URI provided (large file already in GCS)
+    if gcs_uri:
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'mp4'
+        mime_type = mimetypes.guess_type(filename)[0] or 'video/mp4'
+        file_content = None  # No content to read, using GCS
+        print(f"Analyzing from GCS: {gcs_uri}")
 
-    num_episodes = int(request.form.get('numEpisodes', 5))
+    # Mode 2: Direct file upload (small files)
+    elif 'file' in request.files:
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
 
-    # Get file extension and mime type
-    filename = file.filename
-    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-    mime_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-
-    # Read file content
-    file_content = file.read()
+        filename = file.filename
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        mime_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        file_content = file.read()
+    else:
+        return jsonify({"error": "No file uploaded and no gcsUri provided"}), 400
 
     system_prompt = """You are a documentary production analyst. Analyze the provided content and create a comprehensive project blueprint document.
 
@@ -1180,15 +1239,22 @@ Example response format:
         source_filename = filename
 
         if is_video:
-            # For videos, upload temporarily to GCS for Gemini analysis
+            # For videos, use GCS URI for Gemini analysis
             bucket = storage_client.bucket(STORAGE_BUCKET)
-            file_hash = hashlib.md5(file_content).hexdigest()
-            temp_blob_name = f"temp_blueprints/{file_hash}.{ext}"
-            temp_blob = bucket.blob(temp_blob_name)
-            temp_blob.upload_from_string(file_content, content_type=mime_type)
+            temp_blob = None
 
-            # Create URI for Gemini
-            video_uri = f"gs://{STORAGE_BUCKET}/{temp_blob_name}"
+            if gcs_uri:
+                # Large file already in GCS - use provided URI
+                video_uri = gcs_uri
+                print(f"Using existing GCS file: {video_uri}")
+            else:
+                # Small file - upload temporarily to GCS
+                file_hash = hashlib.md5(file_content).hexdigest()
+                temp_blob_name = f"temp_blueprints/{file_hash}.{ext}"
+                temp_blob = bucket.blob(temp_blob_name)
+                temp_blob.upload_from_string(file_content, content_type=mime_type)
+                video_uri = f"gs://{STORAGE_BUCKET}/{temp_blob_name}"
+                print(f"Uploaded temp file: {video_uri}")
 
             prompt = f"""Analyze this video and create a comprehensive documentary project blueprint.
 The video is a reference, sample, or outline for a documentary project.
@@ -1207,15 +1273,16 @@ Return ONLY the JSON object as specified."""
             response = model.generate_content([system_prompt, video_part, prompt])
             result = response.text
 
-            # Delete the temporary video file after analysis
-            def cleanup_video():
-                import time
-                time.sleep(30)
-                try:
-                    temp_blob.delete()
-                except:
-                    pass
-            threading.Thread(target=cleanup_video, daemon=True).start()
+            # Delete the temporary video file after analysis (only if we uploaded it)
+            if temp_blob:
+                def cleanup_video():
+                    import time
+                    time.sleep(30)
+                    try:
+                        temp_blob.delete()
+                    except:
+                        pass
+                threading.Thread(target=cleanup_video, daemon=True).start()
 
         elif is_document:
             # For documents, analyze and generate a blueprint document

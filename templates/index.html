@@ -314,19 +314,72 @@
             const submitBtn = document.getElementById('blueprint-submit-btn');
 
             submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="spinner-small"></span> Analyzing...';
 
             try {
-                // Upload and analyze the blueprint
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('numEpisodes', numEpisodes);
+                let data;
+                const LARGE_FILE_THRESHOLD = 30 * 1024 * 1024; // 30MB
 
-                const response = await fetch('/api/ai/analyze-blueprint', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
+                if (file.size > LARGE_FILE_THRESHOLD) {
+                    // Large file: upload to GCS first, then analyze
+                    submitBtn.innerHTML = '<span class="spinner-small"></span> Uploading large file...';
+
+                    // Step 1: Get signed upload URL
+                    const signedUrlResponse = await fetch('/api/upload/signed-url', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            filename: file.name,
+                            contentType: file.type || 'video/mp4',
+                            fileSize: file.size
+                        })
+                    });
+                    const signedUrlData = await signedUrlResponse.json();
+
+                    if (signedUrlData.error) {
+                        throw new Error(signedUrlData.error);
+                    }
+
+                    // Step 2: Upload file directly to GCS
+                    submitBtn.innerHTML = '<span class="spinner-small"></span> Uploading (' + formatFileSize(file.size) + ')...';
+
+                    const uploadResponse = await fetch(signedUrlData.uploadUrl, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': file.type || 'video/mp4' },
+                        body: file
+                    });
+
+                    if (!uploadResponse.ok) {
+                        throw new Error('Failed to upload file to storage');
+                    }
+
+                    // Step 3: Analyze from GCS
+                    submitBtn.innerHTML = '<span class="spinner-small"></span> Analyzing video...';
+
+                    const analyzeResponse = await fetch('/api/ai/analyze-blueprint', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            gcsUri: signedUrlData.gcsUri,
+                            filename: file.name,
+                            numEpisodes: numEpisodes
+                        })
+                    });
+                    data = await analyzeResponse.json();
+
+                } else {
+                    // Small file: direct upload
+                    submitBtn.innerHTML = '<span class="spinner-small"></span> Analyzing...';
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('numEpisodes', numEpisodes);
+
+                    const response = await fetch('/api/ai/analyze-blueprint', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    data = await response.json();
+                }
 
                 if (data.error) {
                     throw new Error(data.error);
