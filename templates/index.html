@@ -15,8 +15,22 @@
             gfm: true
         });
         // Custom renderer to open links in new tab
+        // marked.js v4+ uses token objects instead of separate parameters
         const renderer = new marked.Renderer();
-        renderer.link = function(href, title, text) {
+        renderer.link = function(token) {
+            // Handle both old API (separate params) and new API (token object)
+            let href, title, text;
+            if (typeof token === 'object' && token !== null && 'href' in token) {
+                // New API: token is an object with href, title, text properties
+                href = token.href || '';
+                title = token.title || '';
+                text = token.text || href;
+            } else {
+                // Old API: token is href, arguments[1] is title, arguments[2] is text
+                href = token || '';
+                title = arguments[1] || '';
+                text = arguments[2] || href;
+            }
             const titleAttr = title ? ` title="${title}"` : '';
             return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
         };
@@ -1091,36 +1105,6 @@
             }
         }
 
-        // Convert plain URLs in text to clickable anchor tags
-        function makeLinksClickable(text) {
-            // Ensure we have a string
-            if (typeof text !== 'string') {
-                console.error('makeLinksClickable received non-string:', text);
-                text = String(text || '');
-            }
-
-            // First, escape HTML to prevent XSS
-            let escaped = text
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-
-            // Convert URLs to anchor tags
-            // Match URLs that start with http:// or https://
-            const urlPattern = /(https?:\/\/[^\s<>\[\]()\"\']+)/g;
-
-            escaped = escaped.replace(urlPattern, function(url) {
-                // Clean up trailing punctuation that's not part of URL
-                var cleanUrl = url.replace(/[.,;:!?\)]+$/, '');
-                return '<a href="' + cleanUrl + '" target="_blank" rel="noopener noreferrer">' + cleanUrl + '</a>';
-            });
-
-            // Convert newlines to <br> for proper display
-            escaped = escaped.replace(/\n/g, '<br>');
-
-            return escaped;
-        }
-
         async function doSimpleResearch(title, description) {
             const modal = document.getElementById('ai-modal');
             const content = document.getElementById('ai-modal-content');
@@ -1143,36 +1127,44 @@
                     description: description
                 });
 
-                console.log('API response:', response);
+                console.log('=== RESEARCH API RESPONSE ===');
+                console.log('Full response:', response);
+                console.log('response.result type:', typeof response.result);
+                console.log('response.result value:', response.result);
 
-                // Get the result text - handle both string and object responses
+                // Get the result text
                 let resultText = response.result;
-                if (typeof resultText === 'object' && resultText !== null) {
-                    // If result is an object, try to get the text property
-                    resultText = resultText.text || resultText.content || JSON.stringify(resultText);
+
+                if (!resultText || typeof resultText !== 'string') {
+                    console.error('Invalid result:', resultText);
+                    throw new Error('Invalid response format');
                 }
 
-                if (resultText) {
-                    // Convert the plain text response to HTML with clickable links
-                    const htmlContent = makeLinksClickable(resultText);
+                console.log('Result text length:', resultText.length);
+                console.log('First 500 chars:', resultText.substring(0, 500));
 
-                    content.innerHTML = `
-                        <div class="ai-section">
-                            <h4>🔍 Research: ${title}</h4>
-                            <div class="ai-result research-result-content">
-                                ${htmlContent}
-                            </div>
-                            <div class="ai-actions mt-4">
-                                <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
-                                <button class="btn btn-primary" onclick="copyResearchToClipboard()">📋 Copy</button>
-                            </div>
+                // Use marked.parse() to convert markdown to HTML
+                // The custom renderer will make links open in new tabs
+                const htmlContent = marked.parse(resultText);
+
+                console.log('Parsed HTML length:', htmlContent.length);
+                console.log('First 500 chars of HTML:', htmlContent.substring(0, 500));
+
+                content.innerHTML = `
+                    <div class="ai-section">
+                        <h4>🔍 Research: ${title}</h4>
+                        <div class="ai-result research-result-content">
+                            ${htmlContent}
                         </div>
-                    `;
-                    // Store result for copying
-                    window.lastResearchResult = resultText;
-                } else {
-                    throw new Error('No result returned');
-                }
+                        <div class="ai-actions mt-4">
+                            <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
+                            <button class="btn btn-primary" onclick="copyResearchToClipboard()">📋 Copy</button>
+                        </div>
+                    </div>
+                `;
+                // Store result for copying
+                window.lastResearchResult = resultText;
+
             } catch (error) {
                 console.error('Research error:', error);
                 content.innerHTML = `
