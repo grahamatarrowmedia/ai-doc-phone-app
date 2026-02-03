@@ -192,6 +192,40 @@ def extract_urls(text):
     return unique_urls[:MAX_URLS_PER_QUERY]
 
 
+def validate_url(url, timeout=5):
+    """Check if a URL is accessible (returns True if reachable)."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.head(url, headers=headers, timeout=timeout, allow_redirects=True)
+        return response.status_code < 400
+    except:
+        # Try GET if HEAD fails (some servers don't support HEAD)
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout, stream=True)
+            response.close()
+            return response.status_code < 400
+        except:
+            return False
+
+
+def filter_valid_urls(urls, max_to_check=10):
+    """Filter URLs to only include valid, accessible ones."""
+    valid_urls = []
+    checked = 0
+    for url in urls:
+        if checked >= max_to_check:
+            break
+        if validate_url(url):
+            valid_urls.append(url)
+            print(f"✓ Valid URL: {url[:60]}...")
+        else:
+            print(f"✗ Invalid URL: {url[:60]}...")
+        checked += 1
+    return valid_urls
+
+
 def convert_to_pdf(html_content, url):
     """Convert HTML content to PDF."""
     try:
@@ -968,11 +1002,16 @@ Generate thorough, VERIFIED, production-ready research with source URLs."""
         research_id = f"ep_{episode_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         response_data["researchId"] = research_id
 
-        # Download sources synchronously (limited to prevent timeout)
+        # Validate URLs before downloading (filter out broken links)
+        print(f"Validating {len(urls)} URLs...")
+        valid_urls = filter_valid_urls(urls, max_to_check=10)
+        print(f"Found {len(valid_urls)} valid URLs out of {len(urls)}")
+
+        # Download valid sources synchronously (limited to prevent timeout)
         MAX_SYNC_DOWNLOADS = 3
         ensure_bucket_exists(STORAGE_BUCKET)
         downloaded_sources = []
-        for url in urls[:MAX_SYNC_DOWNLOADS]:
+        for url in valid_urls[:MAX_SYNC_DOWNLOADS]:
             try:
                 result_download = download_and_store(url, STORAGE_BUCKET, project_id, research_id)
                 downloaded_sources.append({
@@ -985,8 +1024,8 @@ Generate thorough, VERIFIED, production-ready research with source URLs."""
             except Exception as e:
                 downloaded_sources.append({"url": url, "status": "error", "error": str(e)})
 
-        # Mark remaining URLs as pending (not downloaded yet)
-        for url in urls[MAX_SYNC_DOWNLOADS:]:
+        # Mark remaining valid URLs as pending (not downloaded yet)
+        for url in valid_urls[MAX_SYNC_DOWNLOADS:]:
             downloaded_sources.append({"url": url, "status": "pending"})
 
         response_data["sources"] = downloaded_sources
