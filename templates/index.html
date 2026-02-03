@@ -1133,7 +1133,6 @@
                 <div class="ai-section">
                     <h4>🔍 Researching: ${title}</h4>
                     <p class="text-sm text-muted mb-3">Gathering background research with source links...</p>
-                    <p class="text-xs text-muted">Research will be saved to this episode.</p>
                     <div class="loading-state">
                         <div class="spinner"></div>
                         <p>This may take a moment...</p>
@@ -1149,7 +1148,7 @@
                     description: description,
                     episodeId: episodeId,
                     projectId: state.currentProject,
-                    save: true
+                    save: false
                 });
 
                 console.log('=== RESEARCH API RESPONSE ===');
@@ -1175,32 +1174,22 @@
                 console.log('Parsed HTML length:', htmlContent.length);
                 console.log('First 500 chars of HTML:', htmlContent.substring(0, 500));
 
-                const savedMessage = response.saved
-                    ? '<p class="text-success text-sm mb-2">✓ Research saved to episode</p>'
-                    : '<p class="text-warning text-sm mb-2">⚠ Research not saved</p>';
-
                 content.innerHTML = `
                     <div class="ai-section">
                         <h4>🔍 Research: ${title}</h4>
-                        ${savedMessage}
+                        <p class="text-muted text-sm mb-2">Click Save to store this research with the episode</p>
                         <div class="ai-result research-result-content">
                             ${htmlContent}
                         </div>
                         <div class="ai-actions mt-4">
                             <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
-                            <button class="btn btn-primary" onclick="copyResearchToClipboard()">📋 Copy</button>
+                            <button class="btn btn-primary" onclick="saveResearch()">💾 Save</button>
                         </div>
                     </div>
                 `;
-                // Store result for copying
+                // Store result and episodeId for saving
                 window.lastResearchResult = resultText;
-
-                // Reload project data to show saved research indicator
-                if (response.saved) {
-                    console.log('Research saved, reloading project data...');
-                    await loadProjectData(state.currentProject);
-                    render();
-                }
+                window.lastResearchEpisodeId = episodeId;
 
             } catch (error) {
                 console.error('Research error:', error);
@@ -1330,6 +1319,34 @@
                 }).catch(err => {
                     console.error('Failed to copy:', err);
                 });
+            }
+        }
+
+        async function saveResearch() {
+            console.log('=== saveResearch ===');
+            console.log('lastResearchEpisodeId:', window.lastResearchEpisodeId);
+            console.log('lastResearchResult length:', window.lastResearchResult ? window.lastResearchResult.length : 0);
+
+            if (!window.lastResearchEpisodeId || !window.lastResearchResult) {
+                alert('No research to save');
+                return;
+            }
+
+            try {
+                const response = await api('/api/episodes/' + window.lastResearchEpisodeId + '/research', 'PUT', {
+                    research: window.lastResearchResult
+                });
+
+                console.log('Save response:', response);
+                alert('Research saved successfully!');
+
+                // Reload project data to show saved research indicator
+                await loadProjectData(state.currentProject);
+                render();
+
+            } catch (error) {
+                console.error('Error saving research:', error);
+                alert('Failed to save research: ' + error.message);
             }
         }
 

@@ -1050,6 +1050,30 @@ def delete_episode_research(episode_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/episodes/<episode_id>/research", methods=["PUT"])
+def save_episode_research(episode_id):
+    """Save research to an episode."""
+    print(f"[DEBUG] Saving research for episode {episode_id}")
+    try:
+        data = request.get_json()
+        research = data.get('research', '')
+
+        if not research:
+            return jsonify({"error": "No research content provided"}), 400
+
+        episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+        episode_ref.update({
+            'research': research,
+            'researchGeneratedAt': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat()
+        })
+        print(f"[DEBUG] Research saved for episode {episode_id}, length: {len(research)}")
+        return jsonify({"success": True, "episodeId": episode_id})
+    except Exception as e:
+        print(f"[ERROR] Failed to save research: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/ai/interview-questions", methods=["POST"])
 def ai_interview_questions():
     """Generate interview questions."""
