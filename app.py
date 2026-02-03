@@ -245,13 +245,23 @@ def create_source_document_asset(project_id, research_id, doc_result):
 
 def process_source_documents_async(urls, bucket_name, project_id, research_id):
     """Background thread to download and process source documents."""
+    print(f"Starting download of {len(urls)} sources for research {research_id}")
+    success_count = 0
+    error_count = 0
     for url in urls:
         try:
+            print(f"Downloading: {url[:80]}...")
             result = download_and_store(url, bucket_name, project_id, research_id)
             if result.get("status") == "error":
                 print(f"Failed to download {url}: {result.get('error')}")
+                error_count += 1
+            else:
+                print(f"Successfully downloaded: {result.get('title', url)}")
+                success_count += 1
         except Exception as e:
             print(f"Error processing {url}: {e}")
+            error_count += 1
+    print(f"Download complete: {success_count} success, {error_count} errors")
 
 
 def ensure_bucket_exists(bucket_name):
@@ -657,22 +667,28 @@ Remember: For documentary production, ACCURACY IS PARAMOUNT. It's better to prov
 
     response_data = {"result": result, "sources": []}
 
-    # Extract URLs and start background download
+    # Extract URLs and download source documents synchronously
     if download_sources:
         urls = extract_urls(result)
-        if urls:
+        if urls and project_id:
             research_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + hashlib.md5(query.encode()).hexdigest()[:8]
-            response_data["sources"] = [{"url": url, "status": "downloading"} for url in urls]
             response_data["researchId"] = research_id
 
-            # Start background download
+            # Download sources synchronously (daemon threads die when request ends in Cloud Run)
             ensure_bucket_exists(STORAGE_BUCKET)
-            download_thread = threading.Thread(
-                target=process_source_documents_async,
-                args=(urls, STORAGE_BUCKET, project_id, research_id)
-            )
-            download_thread.daemon = True
-            download_thread.start()
+            downloaded_sources = []
+            for url in urls[:MAX_URLS_PER_QUERY]:
+                try:
+                    result_download = download_and_store(url, STORAGE_BUCKET, project_id, research_id)
+                    downloaded_sources.append({
+                        "url": url,
+                        "status": "completed" if result_download.get("status") == "success" else "error",
+                        "title": result_download.get("title", ""),
+                        "filename": result_download.get("filename", "")
+                    })
+                except Exception as e:
+                    downloaded_sources.append({"url": url, "status": "error", "error": str(e)})
+            response_data["sources"] = downloaded_sources
 
     return jsonify(response_data)
 
@@ -837,21 +853,29 @@ Generate thorough, VERIFIED, production-ready research with source URLs."""
 
     response_data = {"result": result, "saved": False, "sources": []}
 
-    # Extract URLs and start background download of source documents
+    # Extract URLs and download source documents synchronously
+    # (Cloud Run kills daemon threads when request ends, so we do this synchronously)
     urls = extract_urls(result)
     if urls and project_id:
         research_id = f"ep_{episode_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-        response_data["sources"] = [{"url": url, "status": "downloading"} for url in urls]
         response_data["researchId"] = research_id
 
-        # Start background download - these will be saved as assets
+        # Download sources synchronously to ensure they're saved as assets
         ensure_bucket_exists(STORAGE_BUCKET)
-        download_thread = threading.Thread(
-            target=process_source_documents_async,
-            args=(urls, STORAGE_BUCKET, project_id, research_id)
-        )
-        download_thread.daemon = True
-        download_thread.start()
+        downloaded_sources = []
+        for url in urls[:MAX_URLS_PER_QUERY]:
+            try:
+                result_download = download_and_store(url, STORAGE_BUCKET, project_id, research_id)
+                downloaded_sources.append({
+                    "url": url,
+                    "status": "completed" if result_download.get("status") == "success" else "error",
+                    "title": result_download.get("title", ""),
+                    "filename": result_download.get("filename", ""),
+                    "error": result_download.get("error")
+                })
+            except Exception as e:
+                downloaded_sources.append({"url": url, "status": "error", "error": str(e)})
+        response_data["sources"] = downloaded_sources
 
     # Auto-save as research linked to this episode
     if project_id and episode_id:
