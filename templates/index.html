@@ -1338,11 +1338,19 @@
                 });
 
                 console.log('Save response:', response);
-                alert('Research saved successfully!');
 
-                // Reload project data to show saved research indicator
+                // Show success with asset count
+                const assetsMsg = response.assetsCreated > 0
+                    ? `\n${response.assetsCreated} reference links added to Assets.`
+                    : '';
+                alert(`Research saved successfully!${assetsMsg}`);
+
+                // Reload project data to show saved research indicator and new assets
                 await loadProjectData(state.currentProject);
                 render();
+
+                // Close the modal after saving
+                closeAIModal();
 
             } catch (error) {
                 console.error('Error saving research:', error);

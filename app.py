@@ -1052,7 +1052,7 @@ def delete_episode_research(episode_id):
 
 @app.route("/api/episodes/<episode_id>/research", methods=["PUT"])
 def save_episode_research(episode_id):
-    """Save research to an episode."""
+    """Save research to an episode and extract links as assets."""
     print(f"[DEBUG] Saving research for episode {episode_id}")
     try:
         data = request.get_json()
@@ -1061,14 +1061,74 @@ def save_episode_research(episode_id):
         if not research:
             return jsonify({"error": "No research content provided"}), 400
 
+        # Get episode to find projectId
         episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+        episode_doc = episode_ref.get()
+        if not episode_doc.exists:
+            return jsonify({"error": "Episode not found"}), 404
+
+        episode_data = episode_doc.to_dict()
+        project_id = episode_data.get('projectId')
+        episode_title = episode_data.get('title', 'Unknown Episode')
+
+        # Save research to episode
         episode_ref.update({
             'research': research,
             'researchGeneratedAt': datetime.utcnow().isoformat(),
             'updatedAt': datetime.utcnow().isoformat()
         })
         print(f"[DEBUG] Research saved for episode {episode_id}, length: {len(research)}")
-        return jsonify({"success": True, "episodeId": episode_id})
+
+        # Extract markdown links and create assets
+        links_created = 0
+        if project_id:
+            import re
+            # Find all markdown links: [text](url)
+            markdown_links = re.findall(r'\[([^\]]+)\]\((https?://[^)]+)\)', research)
+            print(f"[DEBUG] Found {len(markdown_links)} links in research")
+
+            for link_text, link_url in markdown_links:
+                try:
+                    # Check if asset with this URL already exists for this project
+                    existing = db.collection(COLLECTIONS['assets']).where(
+                        'projectId', '==', project_id
+                    ).where(
+                        'source', '==', link_url
+                    ).limit(1).get()
+
+                    if len(list(existing)) > 0:
+                        print(f"[DEBUG] Asset already exists for URL: {link_url[:50]}...")
+                        continue
+
+                    # Create asset for this link
+                    asset_data = {
+                        "projectId": project_id,
+                        "episodeId": episode_id,
+                        "title": link_text[:100],  # Limit title length
+                        "type": "Reference",
+                        "source": link_url,
+                        "status": "Identified",
+                        "isSourceDocument": False,
+                        "isResearchLink": True,
+                        "sourceEpisode": episode_title,
+                        "notes": f"Extracted from research for: {episode_title}",
+                        "createdAt": datetime.utcnow().isoformat(),
+                        "updatedAt": datetime.utcnow().isoformat()
+                    }
+                    doc_ref = db.collection(COLLECTIONS['assets']).document()
+                    doc_ref.set(asset_data)
+                    links_created += 1
+                    print(f"[DEBUG] Created asset: {link_text[:50]}...")
+                except Exception as link_error:
+                    print(f"[ERROR] Failed to create asset for {link_url}: {link_error}")
+
+        print(f"[DEBUG] Created {links_created} new assets from research links")
+        return jsonify({
+            "success": True,
+            "episodeId": episode_id,
+            "linksExtracted": len(markdown_links) if project_id else 0,
+            "assetsCreated": links_created
+        })
     except Exception as e:
         print(f"[ERROR] Failed to save research: {e}")
         return jsonify({"error": str(e)}), 500
