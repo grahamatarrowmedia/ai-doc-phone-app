@@ -1277,6 +1277,68 @@ def save_episode_research(episode_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/projects/<project_id>/assets/download-pending", methods=["POST"])
+def download_pending_assets(project_id):
+    """Download pending research link assets (up to 3 at a time)."""
+    print(f"[DEBUG] Downloading pending assets for project {project_id}")
+    try:
+        # Get pending assets
+        pending_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'status', '==', 'Pending'
+        ).limit(3)
+
+        pending_docs = list(pending_ref.stream())
+        print(f"[DEBUG] Found {len(pending_docs)} pending assets")
+
+        if not pending_docs:
+            return jsonify({
+                "success": True,
+                "message": "No pending downloads",
+                "downloadsCompleted": 0,
+                "downloadsFailed": 0,
+                "remainingPending": 0
+            })
+
+        downloads_completed = 0
+        downloads_failed = 0
+
+        for doc in pending_docs:
+            asset_data = doc.to_dict()
+            asset_id = doc.id
+            url = asset_data.get('source', '')
+
+            if url:
+                # Update status to Downloading
+                doc.reference.update({'status': 'Downloading', 'updatedAt': datetime.utcnow().isoformat()})
+
+                if download_research_link(asset_id, url, project_id, timeout=15):
+                    downloads_completed += 1
+                else:
+                    downloads_failed += 1
+
+        # Count remaining pending
+        remaining_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'status', '==', 'Pending'
+        )
+        remaining_count = len(list(remaining_ref.stream()))
+
+        print(f"[DEBUG] Download batch complete: {downloads_completed} success, {downloads_failed} failed, {remaining_count} remaining")
+        return jsonify({
+            "success": True,
+            "downloadsCompleted": downloads_completed,
+            "downloadsFailed": downloads_failed,
+            "remainingPending": remaining_count
+        })
+
+    except Exception as e:
+        print(f"[ERROR] Failed to download pending assets: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/ai/interview-questions", methods=["POST"])
 def ai_interview_questions():
     """Generate interview questions."""

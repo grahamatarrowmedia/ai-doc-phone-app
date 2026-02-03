@@ -1656,16 +1656,115 @@
             `;
         }
 
+        // Auto-refresh for assets with pending downloads
+        let assetsRefreshInterval = null;
+
+        function startAssetsAutoRefresh() {
+            if (assetsRefreshInterval) return; // Already running
+            console.log('Starting assets auto-refresh...');
+            assetsRefreshInterval = setInterval(async () => {
+                if (state.currentTab !== 'assets') {
+                    stopAssetsAutoRefresh();
+                    return;
+                }
+                // Check if there are still pending/downloading assets
+                const hasPending = state.assets.some(a =>
+                    a.status === 'Pending' || a.status === 'Downloading'
+                );
+                if (!hasPending) {
+                    stopAssetsAutoRefresh();
+                    return;
+                }
+                console.log('Auto-refreshing assets...');
+                await loadProjectData(state.currentProject);
+                render();
+            }, 5000); // Refresh every 5 seconds
+        }
+
+        function stopAssetsAutoRefresh() {
+            if (assetsRefreshInterval) {
+                console.log('Stopping assets auto-refresh');
+                clearInterval(assetsRefreshInterval);
+                assetsRefreshInterval = null;
+            }
+        }
+
+        async function downloadPendingAssets() {
+            const pendingCount = state.assets.filter(a => a.status === 'Pending').length;
+            if (pendingCount === 0) {
+                alert('No pending downloads');
+                return;
+            }
+
+            // Update button to show progress
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ Downloading...';
+            btn.disabled = true;
+
+            try {
+                const response = await api(`/api/projects/${state.selectedProject}/assets/download-pending`, 'POST');
+                console.log('Download pending response:', response);
+
+                let msg = `Downloaded: ${response.downloadsCompleted}`;
+                if (response.downloadsFailed > 0) {
+                    msg += `, Failed: ${response.downloadsFailed}`;
+                }
+                if (response.remainingPending > 0) {
+                    msg += `, Remaining: ${response.remainingPending}`;
+                }
+                alert(msg);
+
+                // Reload assets
+                await loadProjectData(state.currentProject);
+                render();
+
+            } catch (error) {
+                console.error('Error downloading pending:', error);
+                alert('Error: ' + error.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
         function renderAssets() {
             // Separate source documents from regular assets
             const sourceAssets = state.assets.filter(a => a.isSourceDocument);
             const regularAssets = state.assets.filter(a => !a.isSourceDocument);
 
+            // Count pending/downloading for progress display
+            const pendingCount = regularAssets.filter(a => a.status === 'Pending').length;
+            const downloadingCount = regularAssets.filter(a => a.status === 'Downloading').length;
+            const downloadedCount = regularAssets.filter(a => a.status === 'Downloaded').length;
+
+            // Start auto-refresh if there are pending/downloading
+            if (pendingCount > 0 || downloadingCount > 0) {
+                startAssetsAutoRefresh();
+            }
+
+            const progressBar = (pendingCount > 0 || downloadingCount > 0) ? `
+                <div class="download-progress-bar">
+                    <div class="progress-info">
+                        <span>📥 Downloads: ${downloadedCount} complete</span>
+                        ${downloadingCount > 0 ? `<span class="text-blue">⏳ ${downloadingCount} in progress</span>` : ''}
+                        ${pendingCount > 0 ? `<span class="text-muted">${pendingCount} pending</span>` : ''}
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width: ${Math.round(downloadedCount / (downloadedCount + pendingCount + downloadingCount) * 100)}%"></div>
+                    </div>
+                </div>
+            ` : '';
+
             return `
                 <div class="section-header">
                     <h2>Assets</h2>
-                    <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
+                    <div class="flex gap-2">
+                        ${pendingCount > 0 ? `<button class="btn btn-secondary" onclick="downloadPendingAssets()">⬇️ Download Pending (${pendingCount})</button>` : ''}
+                        <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
+                    </div>
                 </div>
+                ${progressBar}
 
                 ${sourceAssets.length > 0 ? `
                     <div class="card">
