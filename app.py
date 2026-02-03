@@ -907,15 +907,28 @@ Example response format:
         is_video = mime_type.startswith('video/') or ext in ['mp4', 'mov', 'avi', 'mkv', 'webm']
         is_document = ext in ['pdf', 'txt', 'doc', 'docx', 'md'] or mime_type.startswith('text/')
 
+        # Variable to store blueprint file info
+        blueprint_file = None
+
         if is_video:
-            # For videos, upload to GCS temporarily then use Gemini's video analysis
+            # For videos, upload to GCS and use Gemini's video analysis
             bucket = storage_client.bucket(STORAGE_BUCKET)
-            temp_blob_name = f"temp_blueprints/{hashlib.md5(file_content).hexdigest()}.{ext}"
-            blob = bucket.blob(temp_blob_name)
+            file_hash = hashlib.md5(file_content).hexdigest()
+            blob_name = f"blueprints/{file_hash}.{ext}"
+            blob = bucket.blob(blob_name)
             blob.upload_from_string(file_content, content_type=mime_type)
 
+            # Store blueprint file info
+            blueprint_file = {
+                "path": blob_name,
+                "filename": filename,
+                "mimeType": mime_type,
+                "size": len(file_content),
+                "type": "video"
+            }
+
             # Create a signed URL or use gs:// URI
-            video_uri = f"gs://{STORAGE_BUCKET}/{temp_blob_name}"
+            video_uri = f"gs://{STORAGE_BUCKET}/{blob_name}"
 
             prompt = f"""Analyze this video and extract a documentary project blueprint.
 The video appears to be a reference, sample, or outline for a documentary project.
@@ -933,18 +946,23 @@ Return ONLY the JSON object as specified."""
             response = model.generate_content([system_prompt, video_part, prompt])
             result = response.text
 
-            # Clean up temp file after a delay (async)
-            def cleanup():
-                import time
-                time.sleep(60)  # Wait for processing to complete
-                try:
-                    blob.delete()
-                except:
-                    pass
-            threading.Thread(target=cleanup, daemon=True).start()
-
         elif is_document:
-            # For documents, extract text and analyze
+            # For documents, save to GCS and analyze
+            bucket = storage_client.bucket(STORAGE_BUCKET)
+            file_hash = hashlib.md5(file_content).hexdigest()
+            blob_name = f"blueprints/{file_hash}.{ext}"
+            blob = bucket.blob(blob_name)
+            blob.upload_from_string(file_content, content_type=mime_type)
+
+            # Store blueprint file info
+            blueprint_file = {
+                "path": blob_name,
+                "filename": filename,
+                "mimeType": mime_type,
+                "size": len(file_content),
+                "type": "document"
+            }
+
             if ext == 'pdf':
                 # Use PyPDF or similar - for now just send raw bytes to Gemini
                 doc_part = Part.from_data(file_content, mime_type='application/pdf')
@@ -992,6 +1010,11 @@ Return ONLY the JSON object as specified."""
             cleaned = '\n'.join(lines[1:-1] if lines[-1].startswith('```') else lines[1:])
 
         blueprint = json.loads(cleaned)
+
+        # Include blueprint file info if saved
+        if blueprint_file:
+            blueprint["blueprintFile"] = blueprint_file
+
         return jsonify({"blueprint": blueprint})
 
     except Exception as e:

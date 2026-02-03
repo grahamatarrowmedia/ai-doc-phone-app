@@ -334,13 +334,19 @@
 
                 const blueprint = data.blueprint;
 
-                // Create the project with extracted data
-                const newProject = await api('/api/projects', 'POST', {
+                // Create the project with extracted data (including blueprint file if present)
+                const projectData = {
                     title: blueprint.title,
                     description: blueprint.description,
                     style: blueprint.style,
                     status: 'Planning'
-                });
+                };
+
+                if (blueprint.blueprintFile) {
+                    projectData.blueprintFile = blueprint.blueprintFile;
+                }
+
+                const newProject = await api('/api/projects', 'POST', projectData);
 
                 state.selectedProject = newProject.id;
                 closeProjectsModal();
@@ -755,13 +761,39 @@
         function renderDashboard() {
             if (!state.project) return '<div class="card">No project loaded</div>';
 
+            const blueprintSection = state.project.blueprintFile ? `
+                <div class="card blueprint-card">
+                    <h3 class="mb-3">Project Blueprint</h3>
+                    <div class="blueprint-content">
+                        ${state.project.blueprintFile.type === 'video' ? `
+                            <video controls class="blueprint-video">
+                                <source src="/api/document/${state.project.blueprintFile.path}" type="${state.project.blueprintFile.mimeType}">
+                                Your browser does not support video playback.
+                            </video>
+                        ` : `
+                            <div class="blueprint-document">
+                                <span class="blueprint-icon">📄</span>
+                                <div class="blueprint-info">
+                                    <span class="blueprint-filename">${state.project.blueprintFile.filename}</span>
+                                    <span class="blueprint-size">${formatFileSize(state.project.blueprintFile.size)}</span>
+                                </div>
+                                <a href="/api/download/${state.project.blueprintFile.path}" class="btn btn-sm btn-secondary">Download</a>
+                            </div>
+                        `}
+                    </div>
+                </div>
+            ` : '';
+
             return `
                 <div class="card">
                     <p class="mb-2">${state.project.description || '<em>No description</em>'}</p>
                     <div class="mt-3">
                         <span class="badge badge-blue">${state.project.status}</span>
+                        ${state.project.style ? `<span class="badge badge-gray">${state.project.style}</span>` : ''}
                     </div>
                 </div>
+
+                ${blueprintSection}
 
                 <div class="stat-grid">
                     <div class="stat-card">
@@ -799,6 +831,12 @@
                     </div>
                 </div>
             `;
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
         function renderEpisodes() {

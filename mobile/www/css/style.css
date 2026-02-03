@@ -607,6 +607,47 @@ textarea {
     font-weight: 500;
 }
 
+/* Blueprint display on dashboard */
+.blueprint-card {
+    background: var(--card-bg);
+}
+
+.blueprint-video {
+    width: 100%;
+    max-height: 300px;
+    border-radius: 8px;
+    background: #000;
+}
+
+.blueprint-document {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--hover-bg);
+    border-radius: 8px;
+}
+
+.blueprint-icon {
+    font-size: 2rem;
+}
+
+.blueprint-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.blueprint-filename {
+    font-weight: 500;
+    font-size: 0.9375rem;
+}
+
+.blueprint-size {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
 .spinner-small {
     display: inline-block;
     width: 14px;
