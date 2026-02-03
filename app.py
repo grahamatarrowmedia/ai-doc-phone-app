@@ -1105,40 +1105,90 @@ Return ONLY the JSON array, no other text."""
         return jsonify({"topics": [], "raw": result, "error": str(e)})
 
 
-@app.route("/api/upload/signed-url", methods=["POST"])
-def get_signed_upload_url():
-    """Generate a resumable upload URL for direct upload to GCS (supports large files)."""
+@app.route("/api/upload/init", methods=["POST"])
+def init_chunked_upload():
+    """Initialize a chunked upload session for large files."""
     data = request.get_json()
     filename = data.get('filename', 'upload')
     content_type = data.get('contentType', 'application/octet-stream')
     file_size = data.get('fileSize', 0)
+    total_chunks = data.get('totalChunks', 1)
 
-    # Generate unique blob name
-    file_hash = hashlib.md5(f"{filename}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:12]
+    # Generate unique upload ID and blob name
+    upload_id = hashlib.md5(f"{filename}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:16]
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-    blob_name = f"uploads/{file_hash}.{ext}"
+    blob_name = f"uploads/{upload_id}.{ext}"
+
+    return jsonify({
+        "uploadId": upload_id,
+        "gcsUri": f"gs://{STORAGE_BUCKET}/{blob_name}",
+        "blobPath": blob_name,
+        "totalChunks": total_chunks
+    })
+
+
+@app.route("/api/upload/chunk/<upload_id>", methods=["POST"])
+def upload_chunk(upload_id):
+    """Upload a chunk of a large file."""
+    chunk_index = int(request.form.get('chunkIndex', 0))
+    total_chunks = int(request.form.get('totalChunks', 1))
+    blob_path = request.form.get('blobPath', '')
+    content_type = request.form.get('contentType', 'application/octet-stream')
+
+    if 'chunk' not in request.files:
+        return jsonify({"error": "No chunk data"}), 400
+
+    chunk = request.files['chunk']
+    chunk_data = chunk.read()
 
     try:
         ensure_bucket_exists(STORAGE_BUCKET)
         bucket = storage_client.bucket(STORAGE_BUCKET)
-        blob = bucket.blob(blob_name)
 
-        # Create resumable upload session (works without private key signing)
-        resumable_url = blob.create_resumable_upload_session(
-            content_type=content_type,
-            size=file_size if file_size > 0 else None
-        )
+        # Store chunk temporarily
+        chunk_blob_name = f"uploads/chunks/{upload_id}/chunk_{chunk_index:04d}"
+        chunk_blob = bucket.blob(chunk_blob_name)
+        chunk_blob.upload_from_string(chunk_data, content_type='application/octet-stream')
+
+        # If this is the last chunk, combine all chunks
+        if chunk_index == total_chunks - 1:
+            # List all chunks
+            chunk_blobs = list(bucket.list_blobs(prefix=f"uploads/chunks/{upload_id}/"))
+            chunk_blobs.sort(key=lambda b: b.name)
+
+            # Combine chunks into final file
+            final_blob = bucket.blob(blob_path)
+
+            # Use compose for efficiency (works for up to 32 components)
+            if len(chunk_blobs) <= 32:
+                final_blob.compose(chunk_blobs)
+            else:
+                # For more than 32 chunks, we need to compose in stages
+                # First, combine all chunk data
+                combined_data = b''
+                for cb in chunk_blobs:
+                    combined_data += cb.download_as_bytes()
+                final_blob.upload_from_string(combined_data, content_type=content_type)
+
+            # Clean up chunks
+            for cb in chunk_blobs:
+                cb.delete()
+
+            return jsonify({
+                "status": "complete",
+                "gcsUri": f"gs://{STORAGE_BUCKET}/{blob_path}",
+                "chunkIndex": chunk_index,
+                "totalChunks": total_chunks
+            })
 
         return jsonify({
-            "uploadUrl": resumable_url,
-            "gcsUri": f"gs://{STORAGE_BUCKET}/{blob_name}",
-            "blobPath": blob_name,
-            "expiresIn": 604800,  # 7 days for resumable uploads
-            "resumable": True
+            "status": "uploaded",
+            "chunkIndex": chunk_index,
+            "totalChunks": total_chunks
         })
 
     except Exception as e:
-        return jsonify({"error": f"Failed to generate upload URL: {str(e)}"}), 500
+        return jsonify({"error": f"Chunk upload failed: {str(e)}"}), 500
 
 
 @app.route("/api/ai/analyze-blueprint", methods=["POST"])

@@ -320,36 +320,54 @@
                 const LARGE_FILE_THRESHOLD = 30 * 1024 * 1024; // 30MB
 
                 if (file.size > LARGE_FILE_THRESHOLD) {
-                    // Large file: upload to GCS first, then analyze
-                    submitBtn.innerHTML = '<span class="spinner-small"></span> Uploading large file...';
+                    // Large file: upload in chunks to GCS, then analyze
+                    const CHUNK_SIZE = 25 * 1024 * 1024; // 25MB chunks
+                    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-                    // Step 1: Get signed upload URL
-                    const signedUrlResponse = await fetch('/api/upload/signed-url', {
+                    submitBtn.innerHTML = '<span class="spinner-small"></span> Preparing upload...';
+
+                    // Step 1: Initialize chunked upload
+                    const initResponse = await fetch('/api/upload/init', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             filename: file.name,
                             contentType: file.type || 'video/mp4',
-                            fileSize: file.size
+                            fileSize: file.size,
+                            totalChunks: totalChunks
                         })
                     });
-                    const signedUrlData = await signedUrlResponse.json();
+                    const initData = await initResponse.json();
 
-                    if (signedUrlData.error) {
-                        throw new Error(signedUrlData.error);
+                    if (initData.error) {
+                        throw new Error(initData.error);
                     }
 
-                    // Step 2: Upload file directly to GCS
-                    submitBtn.innerHTML = '<span class="spinner-small"></span> Uploading (' + formatFileSize(file.size) + ')...';
+                    // Step 2: Upload chunks
+                    for (let i = 0; i < totalChunks; i++) {
+                        const start = i * CHUNK_SIZE;
+                        const end = Math.min(start + CHUNK_SIZE, file.size);
+                        const chunk = file.slice(start, end);
+                        const progress = Math.round((i + 1) / totalChunks * 100);
 
-                    const uploadResponse = await fetch(signedUrlData.uploadUrl, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': file.type || 'video/mp4' },
-                        body: file
-                    });
+                        submitBtn.innerHTML = `<span class="spinner-small"></span> Uploading ${progress}%...`;
 
-                    if (!uploadResponse.ok) {
-                        throw new Error('Failed to upload file to storage');
+                        const formData = new FormData();
+                        formData.append('chunk', chunk);
+                        formData.append('chunkIndex', i);
+                        formData.append('totalChunks', totalChunks);
+                        formData.append('blobPath', initData.blobPath);
+                        formData.append('contentType', file.type || 'video/mp4');
+
+                        const chunkResponse = await fetch(`/api/upload/chunk/${initData.uploadId}`, {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const chunkData = await chunkResponse.json();
+
+                        if (chunkData.error) {
+                            throw new Error(chunkData.error);
+                        }
                     }
 
                     // Step 3: Analyze from GCS
@@ -359,7 +377,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            gcsUri: signedUrlData.gcsUri,
+                            gcsUri: initData.gcsUri,
                             filename: file.name,
                             numEpisodes: numEpisodes
                         })
