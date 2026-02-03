@@ -1063,13 +1063,15 @@
                                 </div>
                             </div>
 
-                            <!-- Episode Research Section - Disabled in this build -->
+                            <!-- Episode Research Section -->
                             <div class="episode-research-section">
                                 <div class="episode-research-header">
                                     <span class="text-sm font-bold">Research</span>
-                                    <span class="badge badge-gray">Coming Soon</span>
+                                    <button class="ai-button-sm" onclick="doSimpleResearch('${ep.title.replace(/'/g, "\\'")}', '${(ep.description || '').replace(/'/g, "\\'")}')">
+                                        🔍 Research
+                                    </button>
                                 </div>
-                                <p class="text-sm text-muted">AI Research functionality is under development.</p>
+                                <div id="research-result-${ep.id}" class="episode-research-result"></div>
                             </div>
                         </div>
                     `;
@@ -1086,6 +1088,67 @@
             } else {
                 preview.style.display = 'none';
                 full.style.display = 'block';
+            }
+        }
+
+        async function doSimpleResearch(title, description) {
+            const modal = document.getElementById('ai-modal');
+            const content = document.getElementById('ai-modal-content');
+
+            content.innerHTML = `
+                <div class="ai-section">
+                    <h4>🔍 Researching: ${title}</h4>
+                    <p class="text-sm text-muted mb-3">Gathering background research with source links...</p>
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <p>This may take a moment...</p>
+                    </div>
+                </div>
+            `;
+            modal.classList.add('active');
+
+            try {
+                const response = await api('/api/ai/simple-research', 'POST', {
+                    title: title,
+                    description: description
+                });
+
+                if (response.result) {
+                    content.innerHTML = `
+                        <div class="ai-section">
+                            <h4>🔍 Research: ${title}</h4>
+                            <div class="ai-result research-result-content">
+                                ${marked.parse(response.result)}
+                            </div>
+                            <div class="ai-actions mt-4">
+                                <button class="btn btn-secondary" onclick="closeAIModal()">Close</button>
+                                <button class="btn btn-primary" onclick="copyResearchToClipboard()">📋 Copy</button>
+                            </div>
+                        </div>
+                    `;
+                    // Store result for copying
+                    window.lastResearchResult = response.result;
+                } else {
+                    throw new Error('No result returned');
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div class="ai-section">
+                        <h4>❌ Research Error</h4>
+                        <p class="text-error">Failed to generate research: ${error.message}</p>
+                        <button class="btn btn-secondary mt-3" onclick="closeAIModal()">Close</button>
+                    </div>
+                `;
+            }
+        }
+
+        function copyResearchToClipboard() {
+            if (window.lastResearchResult) {
+                navigator.clipboard.writeText(window.lastResearchResult).then(() => {
+                    alert('Research copied to clipboard!');
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                });
             }
         }
 

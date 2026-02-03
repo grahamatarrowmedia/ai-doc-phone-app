@@ -1220,6 +1220,60 @@ textarea {
     margin-right: auto;
 }
 
+/* Research Result Content */
+.research-result-content {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 1rem;
+    background: var(--gray-50);
+    border-radius: 0.5rem;
+    line-height: 1.7;
+}
+
+.research-result-content h1,
+.research-result-content h2,
+.research-result-content h3,
+.research-result-content h4 {
+    color: var(--primary);
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.research-result-content h1:first-child,
+.research-result-content h2:first-child,
+.research-result-content h3:first-child {
+    margin-top: 0;
+}
+
+.research-result-content a {
+    color: var(--primary);
+    text-decoration: underline;
+    font-weight: 500;
+    word-break: break-word;
+}
+
+.research-result-content a:hover {
+    color: var(--primary-dark);
+}
+
+.research-result-content ul,
+.research-result-content ol {
+    margin-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.research-result-content li {
+    margin-bottom: 0.5rem;
+}
+
+.research-result-content p {
+    margin-bottom: 1rem;
+}
+
+.episode-research-result {
+    margin-top: 0.5rem;
+}
+
 .spinner {
     width: 40px;
     height: 40px;

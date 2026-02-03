@@ -950,6 +950,34 @@ def ai_research():
     })
 
 
+@app.route("/api/ai/simple-research", methods=["POST"])
+def ai_simple_research():
+    """Simple AI research query for episode background research."""
+    data = request.get_json()
+    title = data.get('title', '')
+    description = data.get('description', '')
+
+    prompt = f"""I have a documentary episode which is called "{title}": {description}
+
+This requires some research so please do the background research for this.
+Please include the source links for all the research.
+
+Format your response with:
+- Clear sections with headers
+- Bullet points for key facts
+- Include real, clickable URLs to credible sources (news sites, Wikipedia, .gov, .edu, .org sites)
+- Mark each source with its URL in markdown link format: [Source Name](URL)"""
+
+    system_prompt = """You are a documentary research assistant. Provide comprehensive background research with real source links. Always format URLs as markdown links that can be clicked. Focus on factual, verifiable information from credible sources."""
+
+    result = generate_ai_response(prompt, system_prompt)
+
+    return jsonify({
+        "result": result,
+        "title": title
+    })
+
+
 @app.route("/api/ai/interview-questions", methods=["POST"])
 def ai_interview_questions():
     """Generate interview questions."""
