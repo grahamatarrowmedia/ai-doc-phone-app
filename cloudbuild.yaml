@@ -3,32 +3,32 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-research:latest'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-research:latest']
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
       - 'deploy'
-      - 'doc-production-app-dev'
+      - 'doc-production-app-research'
       - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-research:latest'
       - '--region'
       - 'us-central1'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$PROJECT_ID-doc-assets,APP_ENV=dev,APP_VERSION=1.0.1-$SHORT_SHA'
+      - 'GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$PROJECT_ID-doc-assets,APP_ENV=research,APP_VERSION=1.0.1-$SHORT_SHA'
       - '--memory'
       - '1Gi'
 
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-research:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

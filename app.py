@@ -118,70 +118,11 @@ def generate_ai_response(prompt, system_prompt=""):
 
 
 def generate_grounded_research(prompt, system_prompt=""):
-    """Generate AI response with Google Search grounding for verified research."""
-    try:
-        # Create a model with Google Search grounding
-        grounded_model = GenerativeModel(
-            MODEL_NAME,
-            tools=[Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())]
-        )
-
-        full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-        response = grounded_model.generate_content(full_prompt)
-
-        # Extract grounding metadata (sources used by Google Search)
-        grounding_metadata = []
-        try:
-            if hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                # Try multiple paths for grounding metadata
-                gm = getattr(candidate, 'grounding_metadata', None)
-                if gm:
-                    # Check for grounding_chunks (web sources)
-                    chunks = getattr(gm, 'grounding_chunks', None) or getattr(gm, 'web_search_queries', None)
-                    if chunks:
-                        for chunk in chunks:
-                            web = getattr(chunk, 'web', None)
-                            if web:
-                                uri = getattr(web, 'uri', '') or getattr(web, 'url', '')
-                                title = getattr(web, 'title', '')
-                                if uri:
-                                    grounding_metadata.append({'uri': uri, 'title': title})
-
-                    # Also check grounding_supports for citations
-                    supports = getattr(gm, 'grounding_supports', None)
-                    if supports:
-                        for support in supports:
-                            chunks = getattr(support, 'grounding_chunk_indices', [])
-                            # Get the segment info if available
-                            segment = getattr(support, 'segment', None)
-
-                    # Check search_entry_point for search suggestions
-                    search_entry = getattr(gm, 'search_entry_point', None)
-                    if search_entry:
-                        rendered = getattr(search_entry, 'rendered_content', '')
-                        # Extract URLs from rendered content if present
-                        import re
-                        urls_in_rendered = re.findall(r'href="([^"]+)"', rendered)
-                        for url in urls_in_rendered[:5]:
-                            if url.startswith('http') and url not in [g['uri'] for g in grounding_metadata]:
-                                grounding_metadata.append({'uri': url, 'title': ''})
-
-                print(f"Grounding metadata found: {len(grounding_metadata)} sources")
-        except Exception as gm_error:
-            print(f"Error extracting grounding metadata: {gm_error}")
-
-        return {
-            'text': response.text,
-            'sources': grounding_metadata
-        }
-    except Exception as e:
-        print(f"Grounded research error: {e}")
-        # Fallback to regular generation
-        return {
-            'text': generate_ai_response(prompt, system_prompt),
-            'sources': []
-        }
+    """Placeholder - AI research functionality disabled in this build."""
+    return {
+        'text': 'AI Research functionality is not available in this build.',
+        'sources': []
+    }
 
 
 # ============== Source Document Functions ==============
@@ -1001,92 +942,12 @@ Generate a comprehensive production script with scene breakdowns, shot lists, na
 
 @app.route("/api/ai/research", methods=["POST"])
 def ai_research():
-    """AI-assisted research with automatic source document download."""
-    data = request.get_json()
-    query = data.get('query', '')
-    project_context = data.get('projectContext', '')
-    project_id = data.get('projectId', 'default')
-    download_sources = data.get('downloadSources', True)
-
-    system_prompt = f"""You are a documentary research assistant specializing in VERIFIED, MULTI-SOURCE research. Your role is to provide thoroughly vetted information for documentary production.
-
-## CRITICAL RESEARCH REQUIREMENTS:
-
-1. **VERIFICATION MANDATE**: Only include information that can be verified from MULTIPLE independent sources. Never rely on a single source.
-
-2. **SOURCE HIERARCHY** (prioritize in this order):
-   - Primary sources (official archives, government records, academic institutions)
-   - Peer-reviewed publications and academic journals
-   - Established news organizations with editorial standards
-   - Official organizational websites
-   - Cross-referenced secondary sources
-
-3. **FOR EACH CLAIM OR FACT, YOU MUST**:
-   - Indicate verification status: ✅ VERIFIED (2+ sources) or ⚠️ SINGLE SOURCE
-   - List the corroborating sources
-   - Note if an archive exists and is accessible
-   - Provide direct URLs where available
-
-4. **DO NOT INCLUDE**:
-   - Unverified claims or rumors
-   - Information from single sources without corroboration
-   - Sources that cannot be independently verified
-   - Wikipedia as a primary source (use it only to find primary sources)
-
-5. **FORMAT REQUIREMENTS**:
-   - Group findings by verification confidence
-   - Clearly mark what has archive footage/documents available
-   - Include contact information for archives where possible
-   - Flag any information that needs further verification
-
-Project context: {project_context}
-
-Remember: For documentary production, ACCURACY IS PARAMOUNT. It's better to provide less information that is verified than more information that is uncertain."""
-
-    # Use grounded research to get real, verified URLs from Google Search
-    grounded_result = generate_grounded_research(query, system_prompt)
-    result = grounded_result['text']
-    grounding_sources = grounded_result.get('sources', [])
-
-    response_data = {"result": result, "sources": []}
-
-    # Extract URLs from both the response text and grounding metadata
-    if download_sources:
-        # Get URLs from grounding sources (these are verified real URLs)
-        grounding_urls = [s['uri'] for s in grounding_sources if s.get('uri')]
-        # Also extract any URLs mentioned in the text
-        text_urls = extract_urls(result)
-        # Combine and deduplicate, prioritizing grounding URLs
-        urls = grounding_urls + [u for u in text_urls if u not in grounding_urls]
-        urls = urls[:MAX_URLS_PER_QUERY]  # Limit total URLs
-
-        if urls and project_id:
-            research_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + hashlib.md5(query.encode()).hexdigest()[:8]
-            response_data["researchId"] = research_id
-
-            # Download sources synchronously (limited to 3 to prevent timeout)
-            MAX_SYNC_DOWNLOADS = 3
-            ensure_bucket_exists(STORAGE_BUCKET)
-            downloaded_sources = []
-            for url in urls[:MAX_SYNC_DOWNLOADS]:
-                try:
-                    result_download = download_and_store(url, STORAGE_BUCKET, project_id, research_id)
-                    downloaded_sources.append({
-                        "url": url,
-                        "status": "completed" if result_download.get("status") == "success" else "error",
-                        "title": result_download.get("title", ""),
-                        "filename": result_download.get("filename", "")
-                    })
-                except Exception as e:
-                    downloaded_sources.append({"url": url, "status": "error", "error": str(e)})
-
-            # Mark remaining URLs as pending
-            for url in urls[MAX_SYNC_DOWNLOADS:]:
-                downloaded_sources.append({"url": url, "status": "pending"})
-
-            response_data["sources"] = downloaded_sources
-
-    return jsonify(response_data)
+    """AI research - disabled in this build."""
+    return jsonify({
+        "result": "AI Research functionality is not available in this build.",
+        "sources": [],
+        "disabled": True
+    })
 
 
 @app.route("/api/ai/interview-questions", methods=["POST"])
@@ -1162,104 +1023,13 @@ Suggest themes, storylines, key questions to answer, and unique perspectives."""
 
 @app.route("/api/ai/episode-research", methods=["POST"])
 def ai_episode_research():
-    """Generate research for a documentary episode using simple AI query."""
-    data = request.get_json()
-    episode_id = data.get('episodeId', '')
-    episode_title = data.get('episodeTitle', '')
-    episode_description = data.get('episodeDescription', '')
-    project_title = data.get('projectTitle', '')
-    project_description = data.get('projectDescription', '')
-    project_style = data.get('projectStyle', '')
-    project_id = data.get('projectId', '')
-
-    system_prompt = f"""You are a documentary research specialist. Your task is to provide comprehensive research for documentary production.
-
-## PROJECT CONTEXT
-- Project: {project_title}
-- Description: {project_description}
-- Style: {project_style or 'Documentary'}
-
-## RESEARCH OUTPUT FORMAT
-
-Provide your research in these sections:
-
-### Key Facts & Background
-- Important facts about the topic
-- Historical context
-- Current relevance
-
-### Suggested Sources
-For each source, provide:
-- Source name and type (website, book, archive, etc.)
-- URL if available (use real URLs from known sources like BBC, Reuters, Wikipedia, government sites, etc.)
-- What information it provides
-
-### Potential Interview Subjects
-- Experts in the field
-- People with direct experience
-- Their credentials and why they're relevant
-
-### Visual & Audio Ideas
-- Stock footage suggestions
-- Archive material locations
-- B-roll concepts
-
-### Timeline of Key Events
-- Important dates and milestones
-- Chronological context
-
-### Further Reading
-- Books, articles, documentaries on the topic
-- Include links where possible
-
-Remember to provide REAL URLs from credible sources (news sites, .gov, .edu, .org, Wikipedia, etc.)."""
-
-    prompt = f"""Research this documentary episode:
-
-Episode Title: {episode_title}
-Episode Description: {episode_description}
-
-Provide comprehensive research with real source links that the production team can use."""
-
-    # Use grounded research to get real, verified URLs from Google Search
-    try:
-        grounded_result = generate_grounded_research(prompt, system_prompt)
-        result = grounded_result['text']
-        grounding_sources = grounded_result.get('sources', [])
-    except Exception as e:
-        print(f"Research generation error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-    # Extract URLs from both grounding sources and text
-    grounding_urls = [s['uri'] for s in grounding_sources if s.get('uri')]
-    text_urls = extract_urls(result)
-    # Combine and deduplicate, prioritizing grounding URLs
-    urls = grounding_urls + [u for u in text_urls if u not in grounding_urls]
-
-    response_data = {
-        "result": result,
+    """Episode research - disabled in this build."""
+    return jsonify({
+        "result": "AI Research functionality is not available in this build.",
         "saved": False,
-        "sources": [{"url": url, "status": "found"} for url in urls[:10]]
-    }
-
-    # Auto-save research to database
-    if project_id and episode_id:
-        try:
-            research_data = {
-                'projectId': project_id,
-                'episodeId': episode_id,
-                'title': f"Research: {episode_title}",
-                'content': result,
-                'category': 'Episode Research',
-                'sourceCount': len(urls)
-            }
-            saved_research = create_doc('research', research_data)
-            response_data["saved"] = True
-            response_data["researchId"] = saved_research['id']
-        except Exception as e:
-            print(f"Error saving research: {e}")
-
-    return jsonify(response_data)
+        "sources": [],
+        "disabled": True
+    })
 
 
 @app.route("/api/ai/generate-topics", methods=["POST"])

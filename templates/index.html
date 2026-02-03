@@ -32,6 +32,10 @@
         <div class="dev-banner">
             ⚠️ DEVELOPMENT VERSION - v{{ app_version }}
         </div>
+        {% elif app_env == 'research' %}
+        <div class="dev-banner" style="background: linear-gradient(90deg, #7c3aed 0%, #6d28d9 100%);">
+            🔬 RESEARCH BUILD - v{{ app_version }}
+        </div>
         {% endif %}
         <div class="container">
             <!-- Header -->
@@ -1030,11 +1034,6 @@
                 <div class="section-header">
                     <h2>Episodes</h2>
                     <div class="flex gap-2">
-                        ${state.episodes.length > 0 ? `
-                            <button class="ai-button" onclick="showGenerateAllResearchModal()">
-                                ✨ Generate All Research
-                            </button>
-                        ` : ''}
                         <button class="btn btn-primary" onclick="showAddModal('episode')">+ Add</button>
                     </div>
                 </div>
@@ -1064,30 +1063,13 @@
                                 </div>
                             </div>
 
-                            <!-- Episode Research Section -->
+                            <!-- Episode Research Section - Disabled in this build -->
                             <div class="episode-research-section">
                                 <div class="episode-research-header">
                                     <span class="text-sm font-bold">Research</span>
-                                    <button class="ai-button-sm" onclick="generateEpisodeResearch('${ep.id}', '${ep.title.replace(/'/g, "\\'")}', '${(ep.description || '').replace(/'/g, "\\'")}')">
-                                        ✨ Generate
-                                    </button>
+                                    <span class="badge badge-gray">Coming Soon</span>
                                 </div>
-                                ${hasResearch ? `
-                                    <div class="episode-research-list">
-                                        ${episodeResearch.map(r => `
-                                            <div class="episode-research-item">
-                                                <div class="episode-research-content" onclick="toggleResearchExpand(this)">
-                                                    <div class="episode-research-title">${r.title}</div>
-                                                    <div class="episode-research-preview">${(r.content || '').substring(0, 150)}...</div>
-                                                    <div class="episode-research-full" style="display:none;">${marked.parse(r.content || '')}</div>
-                                                </div>
-                                                <button class="btn-icon btn-icon-sm" onclick="deleteItem('research', '${r.id}')">🗑️</button>
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                ` : `
-                                    <p class="text-sm text-muted">No research yet. Click Generate to create research for this episode.</p>
-                                `}
+                                <p class="text-sm text-muted">AI Research functionality is under development.</p>
                             </div>
                         </div>
                     `;
@@ -1314,28 +1296,15 @@
             return `
                 <div class="section-header">
                     <h2>Research</h2>
-                    <div class="flex gap-2">
-                        <button class="ai-button" onclick="showAIModal('research')">✨ AI Research</button>
-                        <button class="btn btn-primary" onclick="showAddModal('research')">+ Add</button>
+                </div>
+                <div class="card">
+                    <div class="placeholder-message">
+                        <div class="placeholder-icon">🔬</div>
+                        <h3>AI Research Coming Soon</h3>
+                        <p>The AI-powered research functionality is currently under development.</p>
+                        <p class="text-muted">This feature will provide verified, multi-source research with automatic source document downloads.</p>
                     </div>
                 </div>
-                ${state.research.map(r => `
-                    <div class="card">
-                        <div class="item-header">
-                            <div class="flex-1">
-                                <div class="flex gap-2 mb-1 items-center">
-                                    <h3>${r.title}</h3>
-                                    <span class="badge badge-blue">${r.category}</span>
-                                </div>
-                                <div class="research-content">${marked.parse(r.content || '')}</div>
-                            </div>
-                            <div class="item-actions">
-                                <button class="btn-icon" onclick="showEditModal('research', '${r.id}')">✏️</button>
-                                <button class="btn-icon" onclick="deleteItem('research', '${r.id}')">🗑️</button>
-                            </div>
-                        </div>
-                    </div>
-                `).join('')}
             `;
         }
 
