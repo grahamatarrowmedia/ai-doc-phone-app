@@ -1102,19 +1102,96 @@ Return ONLY the JSON object as specified."""
             for ep in blueprint.get('episodes', []):
                 blueprint_doc_content += f"\n### Episode {ep.get('order', '')}: {ep.get('title', '')}\n{ep.get('description', '')}\n"
 
-        # Save blueprint document to GCS
+        # Convert markdown to PDF
+        import markdown
+
+        # Convert markdown to HTML
+        html_content = markdown.markdown(blueprint_doc_content, extensions=['tables', 'fenced_code'])
+
+        # Create styled HTML document
+        styled_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+            color: #333;
+        }}
+        h1 {{
+            color: #1a1a1a;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }}
+        h2 {{
+            color: #2563eb;
+            margin-top: 30px;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 8px;
+        }}
+        h3 {{
+            color: #4b5563;
+            margin-top: 20px;
+        }}
+        p {{
+            margin-bottom: 12px;
+        }}
+        ul, ol {{
+            margin-bottom: 16px;
+            padding-left: 24px;
+        }}
+        li {{
+            margin-bottom: 6px;
+        }}
+        strong {{
+            color: #1a1a1a;
+        }}
+        .header {{
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #2563eb;
+        }}
+        .header h1 {{
+            border: none;
+            margin-bottom: 10px;
+        }}
+        .header p {{
+            color: #6b7280;
+            font-style: italic;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{blueprint.get('title', 'Documentary Blueprint')}</h1>
+        <p>Project Blueprint Document</p>
+    </div>
+    {html_content}
+</body>
+</html>"""
+
+        # Convert HTML to PDF using WeasyPrint
+        pdf_content = HTML(string=styled_html).write_pdf()
+
+        # Save PDF to GCS
         bucket = storage_client.bucket(STORAGE_BUCKET)
         doc_hash = hashlib.md5(blueprint_doc_content.encode()).hexdigest()
-        doc_blob_name = f"blueprints/{doc_hash}_blueprint.md"
+        doc_blob_name = f"blueprints/{doc_hash}_blueprint.pdf"
         doc_blob = bucket.blob(doc_blob_name)
-        doc_blob.upload_from_string(blueprint_doc_content.encode('utf-8'), content_type='text/markdown')
+        doc_blob.upload_from_string(pdf_content, content_type='application/pdf')
 
         # Create blueprint file info for the document
         blueprint["blueprintFile"] = {
             "path": doc_blob_name,
-            "filename": f"{blueprint.get('title', 'Blueprint')[:50]}_blueprint.md",
-            "mimeType": "text/markdown",
-            "size": len(blueprint_doc_content.encode('utf-8')),
+            "filename": f"{blueprint.get('title', 'Blueprint')[:50]}_blueprint.pdf",
+            "mimeType": "application/pdf",
+            "size": len(pdf_content),
             "type": "document",
             "sourceFile": source_filename if is_video else None
         }

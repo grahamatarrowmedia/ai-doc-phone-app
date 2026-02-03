@@ -689,6 +689,13 @@ textarea {
     margin-bottom: 0.75rem;
 }
 
+.blueprint-pdf-viewer {
+    width: 100%;
+    height: 600px;
+    border: none;
+    border-radius: 8px;
+}
+
 .spinner-small {
     display: inline-block;
     width: 14px;

@@ -856,13 +856,23 @@
 
                 // Load content if not already loaded
                 if (!blueprintLoaded && state.project.blueprintFile) {
-                    try {
-                        const response = await fetch(`/api/document/${state.project.blueprintFile.path}`);
-                        const text = await response.text();
-                        content.innerHTML = `<div class="blueprint-rendered">${marked.parse(text)}</div>`;
+                    const filePath = state.project.blueprintFile.path;
+                    const isPdf = filePath.endsWith('.pdf');
+
+                    if (isPdf) {
+                        // Embed PDF viewer
+                        content.innerHTML = `<iframe src="/api/document/${filePath}" class="blueprint-pdf-viewer"></iframe>`;
                         blueprintLoaded = true;
-                    } catch (error) {
-                        content.innerHTML = `<p class="text-muted">Error loading blueprint: ${error.message}</p>`;
+                    } else {
+                        // Render markdown
+                        try {
+                            const response = await fetch(`/api/document/${filePath}`);
+                            const text = await response.text();
+                            content.innerHTML = `<div class="blueprint-rendered">${marked.parse(text)}</div>`;
+                            blueprintLoaded = true;
+                        } catch (error) {
+                            content.innerHTML = `<p class="text-muted">Error loading blueprint: ${error.message}</p>`;
+                        }
                     }
                 }
             } else {
