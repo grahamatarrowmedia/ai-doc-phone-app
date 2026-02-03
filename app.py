@@ -1039,13 +1039,23 @@ Project context: {project_context}
 
 Remember: For documentary production, ACCURACY IS PARAMOUNT. It's better to provide less information that is verified than more information that is uncertain."""
 
-    result = generate_ai_response(query, system_prompt)
+    # Use grounded research to get real, verified URLs from Google Search
+    grounded_result = generate_grounded_research(query, system_prompt)
+    result = grounded_result['text']
+    grounding_sources = grounded_result.get('sources', [])
 
     response_data = {"result": result, "sources": []}
 
-    # Extract URLs and download source documents synchronously
+    # Extract URLs from both the response text and grounding metadata
     if download_sources:
-        urls = extract_urls(result)
+        # Get URLs from grounding sources (these are verified real URLs)
+        grounding_urls = [s['uri'] for s in grounding_sources if s.get('uri')]
+        # Also extract any URLs mentioned in the text
+        text_urls = extract_urls(result)
+        # Combine and deduplicate, prioritizing grounding URLs
+        urls = grounding_urls + [u for u in text_urls if u not in grounding_urls]
+        urls = urls[:MAX_URLS_PER_QUERY]  # Limit total URLs
+
         if urls and project_id:
             research_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + hashlib.md5(query.encode()).hexdigest()[:8]
             response_data["researchId"] = research_id
@@ -1207,15 +1217,20 @@ Episode Description: {episode_description}
 
 Provide comprehensive research with real source links that the production team can use."""
 
-    # Simple AI query - no grounding or downloads
+    # Use grounded research to get real, verified URLs from Google Search
     try:
-        result = generate_ai_response(prompt, system_prompt)
+        grounded_result = generate_grounded_research(prompt, system_prompt)
+        result = grounded_result['text']
+        grounding_sources = grounded_result.get('sources', [])
     except Exception as e:
         print(f"Research generation error: {e}")
         return jsonify({"error": str(e)}), 500
 
-    # Extract URLs from the response
-    urls = extract_urls(result)
+    # Extract URLs from both grounding sources and text
+    grounding_urls = [s['uri'] for s in grounding_sources if s.get('uri')]
+    text_urls = extract_urls(result)
+    # Combine and deduplicate, prioritizing grounding URLs
+    urls = grounding_urls + [u for u in text_urls if u not in grounding_urls]
 
     response_data = {
         "result": result,
