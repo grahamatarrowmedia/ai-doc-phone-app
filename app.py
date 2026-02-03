@@ -192,7 +192,7 @@ def extract_urls(text):
     return unique_urls[:MAX_URLS_PER_QUERY]
 
 
-def validate_url(url, timeout=5):
+def validate_url(url, timeout=3):
     """Check if a URL is accessible (returns True if reachable)."""
     try:
         headers = {
@@ -210,12 +210,14 @@ def validate_url(url, timeout=5):
             return False
 
 
-def filter_valid_urls(urls, max_to_check=10):
-    """Filter URLs to only include valid, accessible ones."""
+def filter_valid_urls(urls, max_to_check=5):
+    """Filter URLs to only include valid, accessible ones (limited to prevent timeout)."""
     valid_urls = []
     checked = 0
     for url in urls:
         if checked >= max_to_check:
+            break
+        if len(valid_urls) >= 3:  # Stop once we have enough valid URLs
             break
         if validate_url(url):
             valid_urls.append(url)
@@ -1002,10 +1004,10 @@ Generate thorough, VERIFIED, production-ready research with source URLs."""
         research_id = f"ep_{episode_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         response_data["researchId"] = research_id
 
-        # Validate URLs before downloading (filter out broken links)
-        print(f"Validating {len(urls)} URLs...")
-        valid_urls = filter_valid_urls(urls, max_to_check=10)
-        print(f"Found {len(valid_urls)} valid URLs out of {len(urls)}")
+        # Validate URLs before downloading (limited to prevent timeout)
+        print(f"Validating URLs (checking up to 5)...")
+        valid_urls = filter_valid_urls(urls, max_to_check=5)
+        print(f"Found {len(valid_urls)} valid URLs")
 
         # Download valid sources synchronously (limited to prevent timeout)
         MAX_SYNC_DOWNLOADS = 3
