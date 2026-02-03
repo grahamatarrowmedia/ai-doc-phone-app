@@ -748,6 +748,159 @@ def delete_script(script_id):
     return jsonify({"success": True})
 
 
+@app.route("/api/projects/<project_id>/blueprint-content", methods=["GET"])
+def get_blueprint_content(project_id):
+    """Get the blueprint markdown content for a project."""
+    project = get_doc('projects', project_id)
+    if not project:
+        return jsonify({"error": "Project not found"}), 404
+
+    # Check if project has blueprint content stored
+    blueprint_content = project.get('blueprintContent', '')
+
+    if not blueprint_content and project.get('blueprintFile'):
+        # Try to extract content from stored document
+        try:
+            file_path = project['blueprintFile'].get('path', '')
+            if file_path:
+                bucket = storage_client.bucket(STORAGE_BUCKET)
+                blob = bucket.blob(file_path)
+                if blob.exists():
+                    content = blob.download_as_text()
+                    # If it's HTML (from PDF), try to extract text
+                    if content.startswith('<!DOCTYPE') or content.startswith('<html'):
+                        blueprint_content = "Blueprint document available for download"
+                    else:
+                        blueprint_content = content
+        except Exception as e:
+            print(f"Error loading blueprint content: {e}")
+
+    return jsonify({"content": blueprint_content})
+
+
+@app.route("/api/ai/generate-script", methods=["POST"])
+def ai_generate_script():
+    """Generate a Quickture-compatible documentary script for an episode."""
+    data = request.get_json()
+    episode_id = data.get('episodeId', '')
+    episode_title = data.get('episodeTitle', '')
+    episode_description = data.get('episodeDescription', '')
+    project_title = data.get('projectTitle', '')
+    project_description = data.get('projectDescription', '')
+    project_style = data.get('projectStyle', '')
+    project_id = data.get('projectId', '')
+    duration = data.get('duration', '45 minutes')
+
+    # Get research for this episode if available
+    research_content = ""
+    if episode_id:
+        research_docs = db.collection(COLLECTIONS['research']).where(
+            'episodeId', '==', episode_id
+        ).limit(1).stream()
+        for doc in research_docs:
+            research_content = doc.to_dict().get('content', '')[:5000]
+            break
+
+    system_prompt = f"""You are a professional documentary script writer creating scripts optimized for AI-assisted editing tools like Quickture.
+
+## PROJECT CONTEXT
+- Project: {project_title}
+- Style: {project_style or 'Documentary'}
+- Description: {project_description}
+
+## QUICKTURE-COMPATIBLE SCRIPT FORMAT
+
+Create a detailed documentary script that includes:
+
+1. **HEADER SECTION**
+   - Episode title and number
+   - Target duration
+   - Style/tone notes for editors
+
+2. **SCENE BREAKDOWN** (use this format for each scene):
+   ```
+   SCENE [NUMBER]: [SCENE TITLE]
+   Duration: [estimated time]
+   Location: [setting]
+   Mood: [emotional tone]
+
+   VISUAL:
+   [Description of what we see - B-roll, interviews, graphics]
+
+   AUDIO:
+   [Narration, interview soundbites, ambient sound, music cues]
+
+   NARRATION:
+   "[Exact narration text if any]"
+
+   INTERVIEW BITES:
+   - [Subject name]: "[Key quote or topic to cover]"
+
+   B-ROLL NEEDED:
+   - [List of specific shots needed]
+
+   GRAPHICS/TEXT:
+   - [Any lower thirds, titles, or info graphics]
+
+   TRANSITION:
+   [How this scene connects to the next]
+   ```
+
+3. **SHOT LIST SUMMARY**
+   - Numbered list of all shots with descriptions
+   - Technical notes (wide/close, handheld/tripod, etc.)
+
+4. **INTERVIEW GUIDE**
+   - Questions for each subject
+   - Key points to cover
+
+5. **MUSIC/SOUND DESIGN NOTES**
+   - Mood suggestions per scene
+   - Transition audio cues
+
+## REQUIREMENTS
+- Be specific and actionable for editors
+- Include timing estimates for pacing
+- Mark emotional beats and story arc moments
+- Note any archival footage or graphics needed
+- Keep narration concise and documentary-style
+"""
+
+    research_section = f"\n\nRESEARCH AVAILABLE:\n{research_content}" if research_content else ""
+
+    prompt = f"""Create a detailed, Quickture-compatible documentary script for:
+
+Episode: {episode_title}
+Description: {episode_description}
+Target Duration: {duration}
+{research_section}
+
+Generate a comprehensive production script with scene breakdowns, shot lists, narration, and interview guides."""
+
+    result = generate_ai_response(prompt, system_prompt)
+
+    # Save the script
+    script_data = {
+        'projectId': project_id,
+        'episodeId': episode_id,
+        'title': f"Script: {episode_title}",
+        'content': result,
+        'format': 'quickture',
+        'duration': duration,
+        'status': 'Draft'
+    }
+
+    if project_id:
+        saved_script = create_doc('scripts', script_data)
+        return jsonify({
+            "script": result,
+            "saved": True,
+            "scriptId": saved_script['id']
+        })
+
+    return jsonify({"script": result, "saved": False})
+
+
 # ============== AI Routes ==============
 
 @app.route("/api/ai/research", methods=["POST"])
@@ -1533,6 +1686,9 @@ Return ONLY the JSON object as specified."""
             "type": "document",
             "sourceFile": source_filename if is_video else None
         }
+
+        # Include the markdown content for inline display
+        blueprint["blueprintContent"] = blueprint_doc_content
 
         return jsonify({"blueprint": blueprint})
 

@@ -416,6 +416,9 @@
                 if (blueprint.blueprintFile) {
                     projectData.blueprintFile = blueprint.blueprintFile;
                 }
+                if (blueprint.blueprintContent) {
+                    projectData.blueprintContent = blueprint.blueprintContent;
+                }
 
                 const newProject = await api('/api/projects', 'POST', projectData);
 
@@ -819,7 +822,11 @@
             const content = document.getElementById('content');
 
             switch(state.activeTab) {
-                case 'dashboard': content.innerHTML = renderDashboard(); break;
+                case 'dashboard':
+                    content.innerHTML = renderDashboard();
+                    // Load blueprint content after rendering
+                    setTimeout(() => loadBlueprintContent(), 100);
+                    break;
                 case 'episodes': content.innerHTML = renderEpisodes(); break;
                 case 'research': content.innerHTML = renderResearch(); break;
                 case 'interviews': content.innerHTML = renderInterviews(); break;
@@ -841,18 +848,15 @@
                     <div class="blueprint-header">
                         <h3>Project Blueprint</h3>
                         <div class="blueprint-actions">
-                            <button class="btn btn-sm btn-secondary" onclick="toggleBlueprintView()">
-                                <span id="blueprint-toggle-text">View Document</span>
-                            </button>
-                            <a href="/api/download/${state.project.blueprintFile.path}" class="btn btn-sm btn-secondary">Download</a>
+                            <a href="/api/download/${state.project.blueprintFile.path}" class="btn btn-sm btn-primary" download>
+                                Download PDF
+                            </a>
                         </div>
                     </div>
                     <div class="blueprint-meta">
-                        <span class="blueprint-filename">📄 ${state.project.blueprintFile.filename}</span>
-                        <span class="blueprint-size">${formatFileSize(state.project.blueprintFile.size)}</span>
                         ${sourceInfo}
                     </div>
-                    <div id="blueprint-content" class="blueprint-document-content" style="display: none;">
+                    <div id="blueprint-content" class="blueprint-document-content">
                         <div class="loading-state">
                             <div class="spinner"></div>
                             <p>Loading blueprint...</p>
@@ -917,38 +921,37 @@
         }
 
         let blueprintLoaded = false;
-        async function toggleBlueprintView() {
+        async function loadBlueprintContent() {
             const content = document.getElementById('blueprint-content');
-            const toggleText = document.getElementById('blueprint-toggle-text');
+            if (!content || blueprintLoaded || !state.project?.blueprintFile) return;
 
-            if (content.style.display === 'none') {
-                content.style.display = 'block';
-                toggleText.textContent = 'Hide Document';
+            try {
+                // First check if blueprintContent is already in the project data
+                if (state.project.blueprintContent) {
+                    content.innerHTML = `<div class="blueprint-rendered">${marked.parse(state.project.blueprintContent)}</div>`;
+                    blueprintLoaded = true;
+                    return;
+                }
 
-                // Load content if not already loaded
-                if (!blueprintLoaded && state.project.blueprintFile) {
-                    const filePath = state.project.blueprintFile.path;
-                    const isPdf = filePath.endsWith('.pdf');
+                // Try to get the markdown content via API
+                const response = await fetch(`/api/projects/${state.project.id}/blueprint-content`);
 
-                    if (isPdf) {
-                        // Embed PDF viewer
-                        content.innerHTML = `<iframe src="/api/document/${filePath}" class="blueprint-pdf-viewer"></iframe>`;
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.content && data.content.length > 50) {
+                        content.innerHTML = `<div class="blueprint-rendered">${marked.parse(data.content)}</div>`;
                         blueprintLoaded = true;
-                    } else {
-                        // Render markdown
-                        try {
-                            const response = await fetch(`/api/document/${filePath}`);
-                            const text = await response.text();
-                            content.innerHTML = `<div class="blueprint-rendered">${marked.parse(text)}</div>`;
-                            blueprintLoaded = true;
-                        } catch (error) {
-                            content.innerHTML = `<p class="text-muted">Error loading blueprint: ${error.message}</p>`;
-                        }
+                        return;
                     }
                 }
-            } else {
-                content.style.display = 'none';
-                toggleText.textContent = 'View Document';
+
+                // Show fallback message if no content available
+                content.innerHTML = `<p class="text-muted">Blueprint document available for download</p>`;
+                blueprintLoaded = true;
+
+            } catch (error) {
+                content.innerHTML = `<p class="text-muted">Blueprint document available for download</p>`;
+                blueprintLoaded = true;
             }
         }
 
@@ -1411,33 +1414,153 @@
         }
 
         function renderScripts() {
+            // Episodes without scripts
+            const episodesWithScripts = new Set(state.scripts.map(s => s.episodeId));
+            const episodesWithoutScripts = state.episodes.filter(e => !episodesWithScripts.has(e.id));
+
             return `
                 <div class="section-header">
                     <h2>Scripts</h2>
-                    <div class="flex gap-2">
-                        <button class="ai-button" onclick="showAIModal('script')">✨ AI Outline</button>
-                        <button class="btn btn-primary" onclick="showAddModal('script')">+ Add</button>
-                    </div>
+                    <p class="text-muted">Generate Quickture-compatible documentary scripts for each episode</p>
                 </div>
-                ${state.scripts.map(s => {
-                    const episode = state.episodes.find(e => e.id === s.episodeId);
-                    return `
-                        <div class="card">
-                            <div class="item-header">
-                                <div class="flex-1">
-                                    ${episode ? `<div class="text-xs mb-1" style="color: #2563eb;">${episode.title}</div>` : ''}
-                                    <h3>${s.title}</h3>
-                                    <div class="script-content">${s.content}</div>
+
+                ${episodesWithoutScripts.length > 0 ? `
+                    <div class="card">
+                        <h3>Generate Scripts</h3>
+                        <p class="text-muted mb-3">Select an episode to generate a production-ready script:</p>
+                        <div class="episode-list">
+                            ${episodesWithoutScripts.map(ep => `
+                                <div class="episode-item" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <h4>${ep.title}</h4>
+                                        <p class="text-muted">${ep.description || 'No description'}</p>
+                                    </div>
+                                    <button class="ai-button" onclick="generateScript('${ep.id}', '${ep.title.replace(/'/g, "\\'")}')">
+                                        Generate Script
+                                    </button>
                                 </div>
-                                <div class="item-actions">
-                                    <button class="btn-icon" onclick="showEditModal('script', '${s.id}')">✏️</button>
-                                    <button class="btn-icon" onclick="deleteItem('scripts', '${s.id}')">🗑️</button>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${state.scripts.length > 0 ? `
+                    <div class="section-header mt-4">
+                        <h3>Generated Scripts</h3>
+                    </div>
+                    ${state.scripts.map(s => {
+                        const episode = state.episodes.find(e => e.id === s.episodeId);
+                        return `
+                            <div class="card">
+                                <div class="item-header">
+                                    <div class="flex-1">
+                                        ${episode ? `<div class="text-xs mb-1" style="color: #2563eb;">${episode.title}</div>` : ''}
+                                        <h3>${s.title}</h3>
+                                        <div class="flex gap-2 mt-2">
+                                            <span class="badge badge-gray">${s.format || 'quickture'}</span>
+                                            <span class="badge badge-blue">${s.status || 'Draft'}</span>
+                                            ${s.duration ? `<span class="badge badge-gray">${s.duration}</span>` : ''}
+                                        </div>
+                                    </div>
+                                    <div class="item-actions">
+                                        <button class="btn btn-sm btn-secondary" onclick="viewScript('${s.id}')">View</button>
+                                        <button class="btn btn-sm btn-secondary" onclick="downloadScript('${s.id}')">Export</button>
+                                        <button class="btn-icon" onclick="deleteItem('scripts', '${s.id}')">🗑️</button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    `;
-                }).join('')}
+                        `;
+                    }).join('')}
+                ` : state.episodes.length === 0 ? `
+                    <div class="card">
+                        <p class="text-muted">Create episodes first to generate scripts.</p>
+                    </div>
+                ` : ''}
             `;
+        }
+
+        async function generateScript(episodeId, episodeTitle) {
+            const episode = state.episodes.find(e => e.id === episodeId);
+            if (!episode) return;
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-small"></span> Generating...';
+
+            try {
+                const response = await fetch('/api/ai/generate-script', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        episodeId: episode.id,
+                        episodeTitle: episode.title,
+                        episodeDescription: episode.description || '',
+                        projectId: state.selectedProject,
+                        projectTitle: state.project.title,
+                        projectDescription: state.project.description || '',
+                        projectStyle: state.project.style || '',
+                        duration: episode.duration || '45 minutes'
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                // Reload scripts
+                state.scripts = await api(`/api/projects/${state.selectedProject}/scripts`);
+                render();
+
+                // Show the generated script
+                if (data.scriptId) {
+                    viewScript(data.scriptId);
+                }
+
+            } catch (error) {
+                alert('Error generating script: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Generate Script';
+            }
+        }
+
+        function viewScript(scriptId) {
+            const script = state.scripts.find(s => s.id === scriptId);
+            if (!script) return;
+
+            const episode = state.episodes.find(e => e.id === script.episodeId);
+
+            showModal(script.title, `
+                <div class="script-viewer">
+                    ${episode ? `<div class="text-muted mb-2">Episode: ${episode.title}</div>` : ''}
+                    <div class="flex gap-2 mb-3">
+                        <span class="badge badge-gray">${script.format || 'quickture'}</span>
+                        <span class="badge badge-blue">${script.status || 'Draft'}</span>
+                    </div>
+                    <div class="script-content-full">${marked.parse(script.content || '')}</div>
+                    <div class="flex gap-2 mt-4">
+                        <button class="btn btn-primary" onclick="downloadScript('${scriptId}')">Export as Text</button>
+                        <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        function downloadScript(scriptId) {
+            const script = state.scripts.find(s => s.id === scriptId);
+            if (!script) return;
+
+            // Create downloadable text file
+            const blob = new Blob([script.content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${script.title.replace(/[^a-z0-9]/gi, '_')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         // ============== Modal Functions ==============

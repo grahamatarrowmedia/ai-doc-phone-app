@@ -1111,6 +1111,53 @@ textarea {
     overflow-y: auto;
 }
 
+.script-content-full {
+    background: var(--gray-50);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.script-content-full h1,
+.script-content-full h2,
+.script-content-full h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.script-content-full h1:first-child {
+    margin-top: 0;
+}
+
+.script-content-full pre {
+    background: var(--gray-100);
+    padding: 1rem;
+    border-radius: 0.25rem;
+    overflow-x: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8125rem;
+}
+
+.script-content-full code {
+    background: var(--gray-100);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-family: 'Courier New', monospace;
+}
+
+.script-content-full ul,
+.script-content-full ol {
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.script-viewer {
+    min-width: 600px;
+}
+
 /* Loading */
 .loading-state {
     display: flex;
