@@ -612,6 +612,9 @@ def upload_asset_file():
     # Get form data
     project_id = request.form.get('projectId')
     asset_id = request.form.get('assetId')  # Optional - for updating existing asset
+    episode_id = request.form.get('episodeId')  # Optional - for episode research documents
+    series_id = request.form.get('seriesId')  # Optional - for series research documents
+    is_research_document = request.form.get('isResearchDocument', 'false').lower() == 'true'
     title = request.form.get('title', file.filename)
     asset_type = request.form.get('type', 'Document')
     status = request.form.get('status', 'Acquired')
@@ -656,8 +659,15 @@ def upload_asset_file():
             "mimeType": content_type,
             "sizeBytes": file_size,
             "hasFile": True,
+            "isResearchDocument": is_research_document,
             "updatedAt": datetime.utcnow().isoformat()
         }
+
+        # Add optional entity associations for research documents
+        if episode_id:
+            asset_data["episodeId"] = episode_id
+        if series_id:
+            asset_data["seriesId"] = series_id
 
         if asset_id:
             # Update existing asset
@@ -944,6 +954,87 @@ def complete_asset_chunked_upload(upload_id):
                 cb.delete()
         except:
             pass
+        return jsonify({"error": str(e)}), 500
+
+
+# ============== Research Documents Query Routes ==============
+
+@app.route("/api/episodes/<episode_id>/research-documents", methods=["GET"])
+def get_episode_research_documents(episode_id):
+    """Get all research documents for an episode."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'episodeId', '==', episode_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/series/<series_id>/research-documents", methods=["GET"])
+def get_series_research_documents(series_id):
+    """Get all research documents for a series."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'seriesId', '==', series_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/research-documents", methods=["GET"])
+def get_project_research_documents(project_id):
+    """Get all research documents for a project (project-level only, not episode/series)."""
+    try:
+        # Get research documents that are project-level (no episodeId or seriesId)
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            # Filter to only project-level (no episode or series association)
+            if not doc_data.get('episodeId') and not doc_data.get('seriesId'):
+                doc_data['id'] = doc.id
+                documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/all-research-documents", methods=["GET"])
+def get_all_project_research_documents(project_id):
+    """Get all research documents for a project (including episode and series docs)."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 

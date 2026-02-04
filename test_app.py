@@ -504,6 +504,292 @@ def download_all_source_documents(project_id):
     )
 
 
+# ============== Asset Upload Endpoint ==============
+
+@app.route("/api/assets/upload", methods=["POST"])
+def upload_asset():
+    """Handle asset file upload with research document support."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Get form data
+    project_id = request.form.get('projectId')
+    episode_id = request.form.get('episodeId')
+    series_id = request.form.get('seriesId')
+    is_research_document = request.form.get('isResearchDocument', 'false').lower() == 'true'
+    title = request.form.get('title', file.filename)
+    asset_type = request.form.get('type', 'Document')
+    status = request.form.get('status', 'Acquired')
+    notes = request.form.get('notes', '')
+
+    if not project_id:
+        return jsonify({"error": "Project ID is required"}), 400
+
+    # Read file content
+    file_content = file.read()
+    file_size = len(file_content)
+    content_type = file.content_type or 'application/octet-stream'
+    original_filename = file.filename
+
+    # Generate mock GCS path
+    file_hash = hashlib.md5(file_content).hexdigest()[:8]
+    blob_path = f"assets/{project_id}/{file_hash}_{original_filename}"
+
+    # Store mock content
+    MOCK_DOCUMENTS[blob_path] = file_content
+
+    # Create asset
+    asset_id = str(uuid.uuid4())
+    asset_data = {
+        "id": asset_id,
+        "projectId": project_id,
+        "title": title,
+        "type": asset_type,
+        "status": status,
+        "notes": notes,
+        "gcsPath": blob_path,
+        "filename": original_filename,
+        "mimeType": content_type,
+        "sizeBytes": file_size,
+        "hasFile": True,
+        "isResearchDocument": is_research_document,
+        "createdAt": datetime.utcnow().isoformat(),
+        "updatedAt": datetime.utcnow().isoformat()
+    }
+
+    # Add optional entity associations
+    if episode_id:
+        asset_data["episodeId"] = episode_id
+    if series_id:
+        asset_data["seriesId"] = series_id
+
+    storage['assets'].append(asset_data)
+
+    return jsonify({
+        "success": True,
+        "asset": asset_data,
+        "gcsPath": blob_path,
+        "filename": original_filename,
+        "size": file_size
+    }), 201
+
+
+@app.route("/api/assets/<asset_id>/file", methods=["GET"])
+def get_asset_file(asset_id):
+    """Download an asset's file."""
+    asset = next((a for a in storage['assets'] if a['id'] == asset_id), None)
+    if not asset:
+        return jsonify({"error": "Asset not found"}), 404
+
+    gcs_path = asset.get('gcsPath')
+    if not gcs_path or gcs_path not in MOCK_DOCUMENTS:
+        return jsonify({"error": "File not found"}), 404
+
+    content = MOCK_DOCUMENTS[gcs_path]
+    content_type = asset.get('mimeType', 'application/octet-stream')
+    filename = asset.get('filename', 'download')
+
+    return Response(
+        content,
+        mimetype=content_type,
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+    )
+
+
+# ============== Research Documents Query Endpoints ==============
+
+@app.route("/api/episodes/<episode_id>/research-documents", methods=["GET"])
+def get_episode_research_documents(episode_id):
+    """Get research documents for an episode."""
+    docs = [a for a in storage['assets']
+            if a.get('episodeId') == episode_id and a.get('isResearchDocument')]
+    return jsonify(docs)
+
+
+@app.route("/api/series/<series_id>/research-documents", methods=["GET"])
+def get_series_research_documents(series_id):
+    """Get research documents for a series."""
+    docs = [a for a in storage['assets']
+            if a.get('seriesId') == series_id and a.get('isResearchDocument')]
+    return jsonify(docs)
+
+
+@app.route("/api/projects/<project_id>/research-documents", methods=["GET"])
+def get_project_research_documents(project_id):
+    """Get project-level research documents (not associated with episode/series)."""
+    docs = [a for a in storage['assets']
+            if a.get('projectId') == project_id
+            and a.get('isResearchDocument')
+            and not a.get('episodeId')
+            and not a.get('seriesId')]
+    return jsonify(docs)
+
+
+@app.route("/api/projects/<project_id>/all-research-documents", methods=["GET"])
+def get_all_research_documents(project_id):
+    """Get all research documents for a project."""
+    docs = [a for a in storage['assets']
+            if a.get('projectId') == project_id and a.get('isResearchDocument')]
+    return jsonify(docs)
+
+
+# ============== AI Generate Topics Endpoint ==============
+
+@app.route("/api/ai/generate-topics", methods=["POST"])
+def ai_generate_topics():
+    """Generate episode topics from project title and description."""
+    data = request.get_json()
+    title = data.get('title', 'Documentary')
+    description = data.get('description', '')
+    num_topics = data.get('numTopics', 5)
+
+    # Generate mock topics based on the title
+    mock_topics = [
+        {
+            "title": f"Episode 1: Origins of {title}",
+            "description": f"Exploring the early beginnings and foundational moments that shaped {title}.",
+            "order": 1
+        },
+        {
+            "title": f"Episode 2: Key Figures",
+            "description": f"Profiles of the important people who played crucial roles in the story of {title}.",
+            "order": 2
+        },
+        {
+            "title": f"Episode 3: Turning Points",
+            "description": f"Critical moments and decisions that changed the trajectory of {title}.",
+            "order": 3
+        },
+        {
+            "title": f"Episode 4: Challenges & Triumphs",
+            "description": f"The obstacles faced and victories achieved in the journey of {title}.",
+            "order": 4
+        },
+        {
+            "title": f"Episode 5: Legacy & Impact",
+            "description": f"How {title} continues to influence and shape our world today.",
+            "order": 5
+        },
+        {
+            "title": f"Episode 6: Behind the Scenes",
+            "description": f"Untold stories and lesser-known aspects of {title}.",
+            "order": 6
+        },
+        {
+            "title": f"Episode 7: The Future",
+            "description": f"What lies ahead for {title} and its continued relevance.",
+            "order": 7
+        }
+    ]
+
+    # Return the requested number of topics
+    return jsonify({"topics": mock_topics[:num_topics]})
+
+
+# ============== Simple Research Endpoint ==============
+
+@app.route("/api/ai/simple-research", methods=["POST"])
+def ai_simple_research():
+    """Simple AI research query for episode background research."""
+    data = request.get_json()
+    title = data.get('title', '')
+    description = data.get('description', '')
+    episode_id = data.get('episodeId', '')
+    project_id = data.get('projectId', '')
+    save_research = data.get('save', True)
+
+    result = f"""## Research: {title}
+
+### Background
+{description}
+
+### Key Facts
+- **Fact 1:** Important historical context about this topic
+- **Fact 2:** Relevant statistics and data points
+- **Fact 3:** Expert opinions and perspectives
+
+### Sources
+- [Wikipedia - {title}](https://en.wikipedia.org/wiki/Example)
+- [Academic Journal](https://example.com/journal)
+- [News Archive](https://example.com/news)
+
+### Interview Suggestions
+- Subject matter experts in the field
+- Eyewitnesses or participants
+- Historians and researchers
+
+*This is a mock AI response for testing purposes.*"""
+
+    response_data = {
+        "result": result,
+        "title": title,
+        "saved": False
+    }
+
+    if save_research and episode_id:
+        # Update episode with research
+        for ep in storage['episodes']:
+            if ep['id'] == episode_id:
+                ep['research'] = result
+                ep['researchGeneratedAt'] = datetime.utcnow().isoformat()
+                response_data['saved'] = True
+                response_data['episodeId'] = episode_id
+                break
+
+    return jsonify(response_data)
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["GET"])
+def get_episode_research(episode_id):
+    """Get saved research for an episode."""
+    episode = next((ep for ep in storage['episodes'] if ep['id'] == episode_id), None)
+    if not episode:
+        return jsonify({"error": "Episode not found"}), 404
+
+    return jsonify({
+        "research": episode.get('research', ''),
+        "generatedAt": episode.get('researchGeneratedAt', ''),
+        "episodeId": episode_id,
+        "episodeTitle": episode.get('title', '')
+    })
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["PUT"])
+def save_episode_research(episode_id):
+    """Save research to an episode."""
+    data = request.get_json()
+    research = data.get('research', '')
+
+    for ep in storage['episodes']:
+        if ep['id'] == episode_id:
+            ep['research'] = research
+            ep['researchGeneratedAt'] = datetime.utcnow().isoformat()
+            return jsonify({
+                "success": True,
+                "episodeId": episode_id,
+                "linksExtracted": 0,
+                "assetsCreated": 0
+            })
+
+    return jsonify({"error": "Episode not found"}), 404
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["DELETE"])
+def delete_episode_research(episode_id):
+    """Delete saved research for an episode."""
+    for ep in storage['episodes']:
+        if ep['id'] == episode_id:
+            ep['research'] = ''
+            ep['researchGeneratedAt'] = ''
+            return jsonify({"success": True})
+
+    return jsonify({"error": "Episode not found"}), 404
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("  Documentary Production App - LOCAL TEST MODE")

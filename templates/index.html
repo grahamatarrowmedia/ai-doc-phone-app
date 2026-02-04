@@ -960,8 +960,14 @@
                     content.innerHTML = renderDashboard();
                     // Load blueprint content after rendering
                     setTimeout(() => loadBlueprintContent(), 100);
+                    // Load project research documents
+                    setTimeout(() => loadProjectResearchDocs(), 100);
                     break;
-                case 'episodes': content.innerHTML = renderEpisodes(); break;
+                case 'episodes':
+                    content.innerHTML = renderEpisodes();
+                    // Load episode and series research documents
+                    setTimeout(() => loadAllResearchDocs(), 100);
+                    break;
                 case 'research': content.innerHTML = renderResearch(); break;
                 case 'interviews': content.innerHTML = renderInterviews(); break;
                 case 'production': content.innerHTML = renderProduction(); break;
@@ -1009,6 +1015,16 @@
                 </div>
 
                 ${blueprintSection}
+
+                <div class="card">
+                    <div class="section-header-inline">
+                        <h3>📚 Research Documents</h3>
+                        <button class="btn btn-sm btn-primary" onclick="showResearchUploadModal('project', '${state.selectedProject}', '${state.project.title.replace(/'/g, "\\'")}')">📤 Upload</button>
+                    </div>
+                    <div id="project-research-docs" class="research-docs-grid">
+                        <p class="text-sm text-muted">Loading research documents...</p>
+                    </div>
+                </div>
 
                 <div class="stat-grid">
                     <div class="stat-card">
@@ -1115,6 +1131,9 @@
                         <div class="episode-research-header">
                             <span class="text-sm font-bold">Research</span>
                             <div class="flex gap-2">
+                                <button class="btn-sm btn-secondary" onclick="showResearchUploadModal('episode', '${ep.id}', '${ep.title.replace(/'/g, "\\'")}')">
+                                    📤 Upload
+                                </button>
                                 ${ep.research ? `
                                     <button class="btn-sm btn-secondary" onclick="viewSavedResearch('${ep.id}', '${ep.title.replace(/'/g, "\\'")}')">
                                         📖 View Saved
@@ -1125,6 +1144,7 @@
                                 </button>
                             </div>
                         </div>
+                        <div id="episode-research-docs-${ep.id}" class="episode-research-docs"></div>
                         ${ep.research ? `
                             <div class="saved-research-indicator" onclick="viewSavedResearch('${ep.id}', '${ep.title.replace(/'/g, "\\'")}')">
                                 <span class="badge badge-green">✓ Research saved</span>
@@ -1178,9 +1198,11 @@
                                 <span class="episode-count badge badge-gray">${series.episodes.length} episode${series.episodes.length !== 1 ? 's' : ''}</span>
                             </div>
                             <div class="series-header-actions" onclick="event.stopPropagation()">
+                                <button class="btn-icon" onclick="showResearchUploadModal('series', '${series.id}', '${series.name.replace(/'/g, "\\'")}')" title="Upload research">📤</button>
                                 <button class="btn-icon" onclick="showEditModal('series', '${series.id}')" title="Edit series">✏️</button>
                                 <button class="btn-icon" onclick="deleteSeries('${series.id}')" title="Delete series">🗑️</button>
                             </div>
+                            <div id="series-research-docs-${series.id}" class="series-research-docs" onclick="event.stopPropagation()"></div>
                         </div>
                         <div class="series-episodes">
                             ${series.episodes.length > 0
@@ -1778,9 +1800,10 @@
         }
 
         function renderAssets() {
-            // Separate source documents from regular assets
+            // Separate source documents, research documents, and regular assets
             const sourceAssets = state.assets.filter(a => a.isSourceDocument);
-            const regularAssets = state.assets.filter(a => !a.isSourceDocument);
+            const researchAssets = state.assets.filter(a => a.isResearchDocument);
+            const regularAssets = state.assets.filter(a => !a.isSourceDocument && !a.isResearchDocument);
 
             return `
                 <div class="section-header">
@@ -1789,6 +1812,41 @@
                         <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
                     </div>
                 </div>
+
+                ${researchAssets.length > 0 ? `
+                    <div class="card">
+                        <div class="source-docs-header">
+                            <div>
+                                <h3 class="mb-1">📚 Research Documents (${researchAssets.length})</h3>
+                                <p class="text-sm text-muted">Uploaded reference materials for research</p>
+                            </div>
+                        </div>
+                        <div class="research-docs-grid">
+                            ${researchAssets.map(a => {
+                                const entityLabel = a.episodeId
+                                    ? state.episodes.find(e => e.id === a.episodeId)?.title || 'Episode'
+                                    : a.seriesId
+                                    ? state.series.find(s => s.id === a.seriesId)?.name || 'Series'
+                                    : 'Project';
+                                return `
+                                <div class="research-doc-card">
+                                    <div class="research-doc-info">
+                                        <span class="research-doc-icon">${getDocIcon(a.filename)}</span>
+                                        <div class="research-doc-details">
+                                            <span class="research-doc-title">${a.title}</span>
+                                            <span class="research-doc-meta">${a.filename} (${formatBytes(a.sizeBytes || 0)})</span>
+                                            <span class="research-doc-entity badge badge-gray">${entityLabel}</span>
+                                        </div>
+                                    </div>
+                                    <div class="research-doc-actions">
+                                        ${a.gcsPath ? `<a href="/api/assets/${a.id}/file" class="btn-icon" title="Download">⬇️</a>` : ''}
+                                        <button class="btn-icon" onclick="deleteItem('assets', '${a.id}')" title="Delete">🗑️</button>
+                                    </div>
+                                </div>
+                            `}).join('')}
+                        </div>
+                    </div>
+                ` : ''}
 
                 ${sourceAssets.length > 0 ? `
                     <div class="card">
@@ -2486,6 +2544,405 @@
 
         function closeModal() {
             document.getElementById('modal').classList.remove('active');
+        }
+
+        // ============== Research Document Upload Functions ==============
+
+        let selectedResearchFile = null;
+
+        function showResearchUploadModal(entityType, entityId, entityName) {
+            const modalContent = `
+                <form id="research-upload-form" onsubmit="uploadResearchDocument(event, '${entityType}', '${entityId}')">
+                    <input type="hidden" name="projectId" value="${state.selectedProject}">
+                    <input type="hidden" name="entityType" value="${entityType}">
+                    <input type="hidden" name="entityId" value="${entityId}">
+
+                    <div class="form-group">
+                        <label class="text-sm font-bold">Upload to: ${entityName}</label>
+                    </div>
+
+                    <div class="upload-drop-zone" id="research-drop-zone" onclick="document.getElementById('research-file-input').click()">
+                        <div class="upload-icon">📄</div>
+                        <div class="upload-text">Click to select file or drag & drop</div>
+                        <div class="upload-hint">PDF, DOC, DOCX, TXT (max 100MB)</div>
+                    </div>
+
+                    <input type="file" id="research-file-input" name="file"
+                           accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                           style="display: none"
+                           onchange="handleResearchFileSelect(this)">
+
+                    <div id="research-file-info" class="blueprint-file-info" style="display: none;">
+                        <span id="research-file-name"></span>
+                        <button type="button" class="btn-icon" onclick="clearResearchFile()">✕</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="text-sm text-muted">Document Title</label>
+                        <input type="text" name="title" id="research-title" placeholder="Enter title or use filename" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="text-sm text-muted">Notes (optional)</label>
+                        <textarea name="notes" rows="2" placeholder="Add notes about this document"></textarea>
+                    </div>
+
+                    <div id="research-upload-progress" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="research-progress-fill" style="width: 0%"></div>
+                        </div>
+                        <p class="text-sm text-center mt-2" id="research-progress-text">Uploading...</p>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="research-upload-btn">Upload</button>
+                    </div>
+                </form>
+            `;
+
+            showModal('Upload Research Document', modalContent);
+
+            // Setup drag and drop
+            const dropZone = document.getElementById('research-drop-zone');
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                    document.getElementById('research-file-input').files = e.dataTransfer.files;
+                    handleResearchFileSelect(document.getElementById('research-file-input'));
+                }
+            });
+        }
+
+        function handleResearchFileSelect(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            // Validate file type
+            const allowedTypes = ['application/pdf', 'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
+            const allowedExtensions = ['.pdf', '.doc', '.docx', '.txt'];
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+
+            if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(ext)) {
+                alert('Please select a PDF, DOC, DOCX, or TXT file.');
+                input.value = '';
+                return;
+            }
+
+            // Validate file size (100MB)
+            if (file.size > 100 * 1024 * 1024) {
+                alert('File size must be less than 100MB.');
+                input.value = '';
+                return;
+            }
+
+            selectedResearchFile = file;
+
+            // Show file info
+            document.getElementById('research-drop-zone').style.display = 'none';
+            document.getElementById('research-file-info').style.display = 'flex';
+            document.getElementById('research-file-name').textContent = `${file.name} (${formatBytes(file.size)})`;
+
+            // Set title from filename if empty
+            const titleInput = document.getElementById('research-title');
+            if (!titleInput.value) {
+                titleInput.value = file.name.replace(/\.[^/.]+$/, '');
+            }
+        }
+
+        function clearResearchFile() {
+            selectedResearchFile = null;
+            document.getElementById('research-file-input').value = '';
+            document.getElementById('research-drop-zone').style.display = 'block';
+            document.getElementById('research-file-info').style.display = 'none';
+            document.getElementById('research-title').value = '';
+        }
+
+        async function uploadResearchDocument(event, entityType, entityId) {
+            event.preventDefault();
+
+            if (!selectedResearchFile) {
+                alert('Please select a file to upload.');
+                return;
+            }
+
+            const form = event.target;
+            const submitBtn = document.getElementById('research-upload-btn');
+            const progressDiv = document.getElementById('research-upload-progress');
+            const progressFill = document.getElementById('research-progress-fill');
+            const progressText = document.getElementById('research-progress-text');
+
+            submitBtn.disabled = true;
+            progressDiv.style.display = 'block';
+
+            const formData = new FormData(form);
+            formData.set('file', selectedResearchFile);
+            formData.append('isResearchDocument', 'true');
+
+            // Add the entity ID based on type
+            if (entityType === 'episode') {
+                formData.append('episodeId', entityId);
+            } else if (entityType === 'series') {
+                formData.append('seriesId', entityId);
+            }
+            // For project, we just use projectId which is already in the form
+
+            try {
+                // Check file size for chunked upload
+                if (selectedResearchFile.size > 30 * 1024 * 1024) {
+                    // Large file - use chunked upload
+                    await uploadResearchChunked(formData, progressFill, progressText);
+                } else {
+                    // Small file - regular upload with progress
+                    await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+
+                        xhr.upload.addEventListener('progress', (e) => {
+                            if (e.lengthComputable) {
+                                const percent = Math.round((e.loaded / e.total) * 100);
+                                progressFill.style.width = percent + '%';
+                                progressText.textContent = `Uploading... ${percent}%`;
+                            }
+                        });
+
+                        xhr.addEventListener('load', () => {
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                resolve(JSON.parse(xhr.responseText));
+                            } else {
+                                try {
+                                    const error = JSON.parse(xhr.responseText);
+                                    reject(new Error(error.error || 'Upload failed'));
+                                } catch (e) {
+                                    reject(new Error('Upload failed'));
+                                }
+                            }
+                        });
+
+                        xhr.addEventListener('error', () => reject(new Error('Network error')));
+                        xhr.open('POST', '/api/assets/upload');
+                        xhr.send(formData);
+                    });
+                }
+
+                progressText.textContent = 'Upload complete!';
+                closeModal();
+                await loadProjectData();
+            } catch (error) {
+                alert('Upload error: ' + error.message);
+                submitBtn.disabled = false;
+                progressDiv.style.display = 'none';
+            }
+        }
+
+        async function uploadResearchChunked(formData, progressFill, progressText) {
+            const file = formData.get('file');
+            const chunkSize = 10 * 1024 * 1024; // 10MB chunks
+            const totalChunks = Math.ceil(file.size / chunkSize);
+
+            // Initialize upload
+            const initData = {
+                filename: file.name,
+                contentType: file.type || 'application/octet-stream',
+                fileSize: file.size,
+                totalChunks: totalChunks,
+                projectId: formData.get('projectId'),
+                title: formData.get('title'),
+                type: 'Document',
+                status: 'Acquired',
+                notes: formData.get('notes') || ''
+            };
+
+            const initResponse = await api('/api/assets/upload/init', 'POST', initData);
+
+            // Upload chunks
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * chunkSize;
+                const end = Math.min(start + chunkSize, file.size);
+                const chunk = file.slice(start, end);
+
+                const chunkFormData = new FormData();
+                chunkFormData.append('chunk', chunk);
+                chunkFormData.append('chunkIndex', i);
+                chunkFormData.append('totalChunks', totalChunks);
+                chunkFormData.append('blobPath', initResponse.blobPath);
+                chunkFormData.append('contentType', file.type || 'application/octet-stream');
+
+                await fetch(`/api/assets/upload/chunk/${initResponse.uploadId}`, {
+                    method: 'POST',
+                    body: chunkFormData
+                });
+
+                const percent = Math.round(((i + 1) / totalChunks) * 90);
+                progressFill.style.width = percent + '%';
+                progressText.textContent = `Uploading chunk ${i + 1}/${totalChunks}...`;
+            }
+
+            // Complete upload with entity associations
+            const completeData = {
+                blobPath: initResponse.blobPath,
+                contentType: file.type || 'application/octet-stream',
+                projectId: formData.get('projectId'),
+                filename: file.name,
+                title: formData.get('title'),
+                type: 'Document',
+                status: 'Acquired',
+                notes: formData.get('notes') || ''
+            };
+
+            // Add research document flag and entity associations
+            const entityType = formData.get('entityType');
+            const entityId = formData.get('entityId');
+
+            // Note: The complete endpoint needs to be updated to handle these fields
+            // For now, we'll update the asset after creation
+            const result = await api(`/api/assets/upload/complete/${initResponse.uploadId}`, 'POST', completeData);
+
+            // Update the asset with research document flag and entity associations
+            if (result.asset && result.asset.id) {
+                const updateData = {
+                    isResearchDocument: true
+                };
+                if (entityType === 'episode') {
+                    updateData.episodeId = entityId;
+                } else if (entityType === 'series') {
+                    updateData.seriesId = entityId;
+                }
+                await api(`/api/assets/${result.asset.id}`, 'PUT', updateData);
+            }
+
+            progressFill.style.width = '100%';
+            progressText.textContent = 'Processing...';
+        }
+
+        // ============== Research Documents Display Functions ==============
+
+        async function loadProjectResearchDocs() {
+            const container = document.getElementById('project-research-docs');
+            if (!container) return;
+
+            try {
+                const docs = await api(`/api/projects/${state.selectedProject}/research-documents`);
+                renderResearchDocsGrid(container, docs, 'project');
+            } catch (error) {
+                container.innerHTML = `<p class="text-sm text-error">Error loading research documents</p>`;
+            }
+        }
+
+        async function loadAllResearchDocs() {
+            // Load episode research docs
+            for (const ep of state.episodes) {
+                const container = document.getElementById(`episode-research-docs-${ep.id}`);
+                if (container) {
+                    try {
+                        const docs = await api(`/api/episodes/${ep.id}/research-documents`);
+                        renderResearchDocsChips(container, docs);
+                    } catch (e) {
+                        console.error('Error loading episode research docs:', e);
+                    }
+                }
+            }
+
+            // Load series research docs
+            for (const series of state.series) {
+                const container = document.getElementById(`series-research-docs-${series.id}`);
+                if (container) {
+                    try {
+                        const docs = await api(`/api/series/${series.id}/research-documents`);
+                        renderResearchDocsInline(container, docs);
+                    } catch (e) {
+                        console.error('Error loading series research docs:', e);
+                    }
+                }
+            }
+        }
+
+        function renderResearchDocsGrid(container, docs, entityType) {
+            if (!docs || docs.length === 0) {
+                container.innerHTML = `<p class="text-sm text-muted">No research documents uploaded yet.</p>`;
+                return;
+            }
+
+            container.innerHTML = docs.map(doc => `
+                <div class="research-doc-card">
+                    <div class="research-doc-info">
+                        <span class="research-doc-icon">${getDocIcon(doc.filename)}</span>
+                        <div class="research-doc-details">
+                            <span class="research-doc-title">${doc.title}</span>
+                            <span class="research-doc-meta">${doc.filename} (${formatBytes(doc.sizeBytes || 0)})</span>
+                        </div>
+                    </div>
+                    <div class="research-doc-actions">
+                        ${doc.gcsPath ? `<a href="/api/assets/${doc.id}/file" class="btn-icon" title="Download">⬇️</a>` : ''}
+                        <button class="btn-icon" onclick="deleteResearchDoc('${doc.id}')" title="Delete">🗑️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderResearchDocsChips(container, docs) {
+            if (!docs || docs.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="research-doc-chips">
+                    ${docs.map(doc => `
+                        <a href="/api/assets/${doc.id}/file" class="research-doc-chip" title="${doc.title}">
+                            ${getDocIcon(doc.filename)} ${doc.title.length > 20 ? doc.title.substring(0, 20) + '...' : doc.title}
+                        </a>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderResearchDocsInline(container, docs) {
+            if (!docs || docs.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="series-research-docs-list">
+                    ${docs.map(doc => `
+                        <a href="/api/assets/${doc.id}/file" class="research-doc-chip" title="${doc.title}">
+                            ${getDocIcon(doc.filename)} ${doc.title.length > 15 ? doc.title.substring(0, 15) + '...' : doc.title}
+                        </a>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function getDocIcon(filename) {
+            if (!filename) return '📄';
+            const ext = filename.split('.').pop().toLowerCase();
+            switch(ext) {
+                case 'pdf': return '📕';
+                case 'doc':
+                case 'docx': return '📘';
+                case 'txt': return '📝';
+                default: return '📄';
+            }
+        }
+
+        async function deleteResearchDoc(assetId) {
+            if (!confirm('Delete this research document?')) return;
+            try {
+                await api(`/api/assets/${assetId}`, 'DELETE');
+                await loadProjectData();
+            } catch (error) {
+                alert('Error deleting document: ' + error.message);
+            }
         }
 
         function showAddModal(type) {
