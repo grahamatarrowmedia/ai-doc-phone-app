@@ -652,7 +652,7 @@ def upload_asset_file():
 
 @app.route("/api/assets/<asset_id>/file", methods=["GET"])
 def get_asset_file(asset_id):
-    """Download an asset's file with chunked streaming."""
+    """Download an asset's file."""
     asset = get_doc('assets', asset_id)
     if not asset:
         return jsonify({"error": "Asset not found"}), 404
@@ -670,41 +670,17 @@ def get_asset_file(asset_id):
         content_type = asset.get('mimeType', 'application/octet-stream')
         filename = asset.get('filename', 'download')
 
-        # Reload blob to get accurate size
-        blob.reload()
-        file_size = blob.size or asset.get('sizeBytes', 0)
-
-        # For files under 100MB, download directly (Cloud Run has 1GB memory)
-        if file_size < 100 * 1024 * 1024:
-            content = blob.download_as_bytes()
-            return Response(
-                content,
-                mimetype=content_type,
-                headers={
-                    'Content-Disposition': f'attachment; filename="{filename}"',
-                    'Content-Length': str(len(content))
-                }
-            )
-
-        # For larger files, use range requests to stream
-        chunk_size = 25 * 1024 * 1024  # 25MB chunks
-
-        def generate():
-            start = 0
-            while start < file_size:
-                end = min(start + chunk_size, file_size)
-                # Download chunk using raw_download
-                chunk = blob.download_as_bytes(start=start, end=end-1)
-                yield chunk
-                start = end
-                print(f"Streamed chunk: {start}/{file_size} bytes")
+        # Download the file (Cloud Run has 1GB memory, should handle up to ~500MB files)
+        print(f"Downloading asset file: {asset['gcsPath']}")
+        content = blob.download_as_bytes()
+        print(f"Downloaded {len(content)} bytes")
 
         return Response(
-            generate(),
+            content,
             mimetype=content_type,
             headers={
                 'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Length': str(file_size)
+                'Content-Length': str(len(content))
             }
         )
     except Exception as e:
