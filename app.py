@@ -681,6 +681,183 @@ def get_asset_file(asset_id):
         return jsonify({"error": str(e)}), 500
 
 
+# Chunked upload for large asset files (>32MB)
+CHUNK_SIZE = 10 * 1024 * 1024  # 10MB chunks
+
+
+@app.route("/api/assets/upload/init", methods=["POST"])
+def init_asset_chunked_upload():
+    """Initialize a chunked upload session for large asset files."""
+    data = request.get_json()
+    filename = data.get('filename', 'upload')
+    content_type = data.get('contentType', 'application/octet-stream')
+    file_size = data.get('fileSize', 0)
+    total_chunks = data.get('totalChunks', 1)
+    project_id = data.get('projectId')
+    title = data.get('title', filename)
+    asset_type = data.get('type', 'Document')
+    status = data.get('status', 'Acquired')
+    notes = data.get('notes', '')
+
+    if not project_id:
+        return jsonify({"error": "Project ID is required"}), 400
+
+    # Generate unique upload ID
+    upload_id = hashlib.md5(f"{filename}{project_id}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:16]
+
+    # Generate safe filename and blob path
+    safe_filename = re.sub(r'[^\w\-.]', '_', filename)
+    blob_path = f"assets/{project_id}/{upload_id}_{safe_filename}"
+
+    print(f"Initialized chunked upload: {upload_id} for {filename} ({file_size} bytes, {total_chunks} chunks)")
+
+    return jsonify({
+        "uploadId": upload_id,
+        "blobPath": blob_path,
+        "totalChunks": total_chunks,
+        "projectId": project_id,
+        "filename": filename,
+        "contentType": content_type,
+        "title": title,
+        "type": asset_type,
+        "status": status,
+        "notes": notes
+    })
+
+
+@app.route("/api/assets/upload/chunk/<upload_id>", methods=["POST"])
+def upload_asset_chunk(upload_id):
+    """Upload a chunk of a large asset file."""
+    chunk_index = int(request.form.get('chunkIndex', 0))
+    total_chunks = int(request.form.get('totalChunks', 1))
+    blob_path = request.form.get('blobPath', '')
+    content_type = request.form.get('contentType', 'application/octet-stream')
+
+    if 'chunk' not in request.files:
+        return jsonify({"error": "No chunk data"}), 400
+
+    chunk = request.files['chunk']
+    chunk_data = chunk.read()
+
+    try:
+        ensure_bucket_exists(STORAGE_BUCKET)
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+
+        # Store chunk temporarily
+        chunk_blob_name = f"uploads/chunks/{upload_id}/chunk_{chunk_index:04d}"
+        chunk_blob = bucket.blob(chunk_blob_name)
+        chunk_blob.upload_from_string(chunk_data, content_type='application/octet-stream')
+
+        print(f"Uploaded chunk {chunk_index + 1}/{total_chunks} for {upload_id} ({len(chunk_data)} bytes)")
+
+        return jsonify({
+            "status": "uploaded",
+            "chunkIndex": chunk_index,
+            "totalChunks": total_chunks,
+            "bytesUploaded": len(chunk_data)
+        })
+
+    except Exception as e:
+        print(f"Chunk upload error: {e}")
+        return jsonify({"error": f"Chunk upload failed: {str(e)}"}), 500
+
+
+@app.route("/api/assets/upload/complete/<upload_id>", methods=["POST"])
+def complete_asset_chunked_upload(upload_id):
+    """Complete a chunked upload by combining chunks and creating the asset."""
+    data = request.get_json()
+    blob_path = data.get('blobPath', '')
+    content_type = data.get('contentType', 'application/octet-stream')
+    project_id = data.get('projectId')
+    filename = data.get('filename', 'upload')
+    title = data.get('title', filename)
+    asset_type = data.get('type', 'Document')
+    status = data.get('status', 'Acquired')
+    notes = data.get('notes', '')
+    asset_id = data.get('assetId')  # Optional - for updating existing asset
+
+    if not project_id:
+        return jsonify({"error": "Project ID is required"}), 400
+
+    try:
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+
+        # List all chunks
+        chunk_blobs = list(bucket.list_blobs(prefix=f"uploads/chunks/{upload_id}/"))
+        chunk_blobs.sort(key=lambda b: b.name)
+
+        if not chunk_blobs:
+            return jsonify({"error": "No chunks found for this upload"}), 400
+
+        print(f"Combining {len(chunk_blobs)} chunks for {upload_id}")
+
+        # Combine all chunk data
+        combined_data = b''
+        for cb in chunk_blobs:
+            combined_data += cb.download_as_bytes()
+
+        file_size = len(combined_data)
+
+        # Upload combined file to final location
+        final_blob = bucket.blob(blob_path)
+        final_blob.upload_from_string(combined_data, content_type=content_type)
+
+        print(f"Combined file uploaded: {blob_path} ({file_size} bytes)")
+
+        # Clean up chunks
+        for cb in chunk_blobs:
+            cb.delete()
+
+        # Create or update asset document
+        asset_data = {
+            "projectId": project_id,
+            "title": title,
+            "type": asset_type,
+            "status": status,
+            "notes": notes,
+            "gcsPath": blob_path,
+            "filename": filename,
+            "mimeType": content_type,
+            "sizeBytes": file_size,
+            "hasFile": True,
+            "updatedAt": datetime.utcnow().isoformat()
+        }
+
+        if asset_id:
+            # Update existing asset
+            existing = get_doc('assets', asset_id)
+            if existing and existing.get('gcsPath') and existing['gcsPath'] != blob_path:
+                try:
+                    old_blob = bucket.blob(existing['gcsPath'])
+                    if old_blob.exists():
+                        old_blob.delete()
+                except:
+                    pass
+            asset = update_doc('assets', asset_id, asset_data)
+        else:
+            asset_data['createdAt'] = datetime.utcnow().isoformat()
+            asset = create_doc('assets', asset_data)
+
+        return jsonify({
+            "success": True,
+            "asset": asset,
+            "gcsPath": blob_path,
+            "filename": filename,
+            "size": file_size
+        }), 201
+
+    except Exception as e:
+        print(f"Error completing chunked upload: {e}")
+        # Try to clean up chunks on error
+        try:
+            bucket = storage_client.bucket(STORAGE_BUCKET)
+            for cb in bucket.list_blobs(prefix=f"uploads/chunks/{upload_id}/"):
+                cb.delete()
+        except:
+            pass
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/projects/<project_id>/assets/clear-sources", methods=["DELETE"])
 def clear_source_documents(project_id):
     """Delete all source documents for a project."""
