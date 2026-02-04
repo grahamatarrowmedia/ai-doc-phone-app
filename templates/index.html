@@ -1271,13 +1271,51 @@
             }
         }
 
-        async function doSimpleResearch(episodeId, title, description, seriesId = '') {
-            console.log('=== doSimpleResearch START ===');
+        function doSimpleResearch(episodeId, title, description, seriesId = '') {
+            // Store context for later use
+            window.researchContext = { episodeId, title, description, seriesId };
+
+            const modal = document.getElementById('ai-modal');
+            const content = document.getElementById('ai-modal-content');
+
+            // Show prompt input form
+            content.innerHTML = `
+                <div class="ai-section">
+                    <h4>🔍 Research: ${title}</h4>
+                    <p class="text-muted text-sm mb-3">Enter your research query below. Uploaded research documents from this episode and series will be used as context.</p>
+                    <form onsubmit="executeResearch(event)" class="research-prompt-form">
+                        <div class="form-group mb-3">
+                            <label class="form-label">Research Query</label>
+                            <textarea id="research-prompt" class="form-input" rows="4" placeholder="What would you like to research? e.g., 'Find background information on the key historical events' or 'Research interview subjects and their expertise'">${description || `Research background information for "${title}"`}</textarea>
+                        </div>
+                        <div class="ai-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeAIModal()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">🔍 Research</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            modal.classList.add('active');
+
+            // Focus the textarea
+            setTimeout(() => document.getElementById('research-prompt')?.focus(), 100);
+        }
+
+        async function executeResearch(event) {
+            event.preventDefault();
+
+            const { episodeId, title, description, seriesId } = window.researchContext;
+            const userPrompt = document.getElementById('research-prompt').value.trim();
+
+            if (!userPrompt) {
+                alert('Please enter a research query');
+                return;
+            }
+
+            console.log('=== executeResearch START ===');
             console.log('episodeId:', episodeId);
             console.log('seriesId:', seriesId);
-            console.log('title:', title);
-            console.log('description:', description);
-            console.log('state.currentProject:', state.currentProject);
+            console.log('userPrompt:', userPrompt);
 
             const modal = document.getElementById('ai-modal');
             const content = document.getElementById('ai-modal-content');
@@ -1293,13 +1331,13 @@
                     </div>
                 </div>
             `;
-            modal.classList.add('active');
 
             try {
                 console.log('Calling /api/ai/simple-research...');
                 const response = await api('/api/ai/simple-research', 'POST', {
                     title: title,
                     description: description,
+                    query: userPrompt,
                     episodeId: episodeId,
                     seriesId: seriesId,
                     projectId: state.currentProject,
@@ -1308,9 +1346,6 @@
 
                 console.log('=== RESEARCH API RESPONSE ===');
                 console.log('Full response:', response);
-                console.log('response.result type:', typeof response.result);
-                console.log('response.saved:', response.saved);
-                console.log('response.episodeId:', response.episodeId);
 
                 // Get the result text
                 let resultText = response.result;
@@ -1320,14 +1355,8 @@
                     throw new Error('Invalid response format');
                 }
 
-                console.log('Result text length:', resultText.length);
-                console.log('First 500 chars:', resultText.substring(0, 500));
-
                 // Use marked.parse() to convert markdown to HTML
                 const htmlContent = marked.parse(resultText);
-
-                console.log('Parsed HTML length:', htmlContent.length);
-                console.log('First 500 chars of HTML:', htmlContent.substring(0, 500));
 
                 const docsUsed = response.documentsUsed || 0;
                 const docsInfo = docsUsed > 0

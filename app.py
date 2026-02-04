@@ -1530,16 +1530,17 @@ def read_document_content(gcs_path, mime_type=''):
 
 @app.route("/api/ai/simple-research", methods=["POST"])
 def ai_simple_research():
-    """Simple AI research query for episode background research, augmented with research documents."""
+    """AI research query augmented with uploaded research documents from episode and series."""
     data = request.get_json()
     title = data.get('title', '')
     description = data.get('description', '')
+    user_query = data.get('query', '')  # User's custom research prompt
     episode_id = data.get('episodeId', '')
     series_id = data.get('seriesId', '')
     project_id = data.get('projectId', '')
     save_research = data.get('save', True)
 
-    print(f"[DEBUG] simple-research called: title={title}, episodeId={episode_id}, seriesId={series_id}, projectId={project_id}, save={save_research}")
+    print(f"[DEBUG] simple-research called: title={title}, query={user_query[:50] if user_query else 'None'}..., episodeId={episode_id}, seriesId={series_id}")
 
     # Fetch research documents for context
     research_docs = get_research_document_contents(
@@ -1553,15 +1554,32 @@ def ai_simple_research():
     # Build context from research documents
     context_section = ""
     if research_docs:
-        context_section = "\n\n## Reference Documents\n\nThe following research documents have been provided as context:\n\n"
+        context_section = "\n\n## Reference Documents\n\nThe following research documents have been uploaded and should be used as context:\n\n"
         for doc in research_docs:
             context_section += f"### {doc['source']}\n{doc['content']}\n\n"
 
-    prompt = f"""I have a documentary episode which is called "{title}": {description}
+    # Use user's query if provided, otherwise fall back to title/description
+    research_query = user_query if user_query else f"Research background information for the documentary episode titled '{title}': {description}"
+
+    prompt = f"""You are researching for a documentary episode.
+
+Episode: {title}
+{f'Description: {description}' if description else ''}
 {context_section}
-This requires some research so please do the background research for this.
-{'Please incorporate and build upon the information from the provided reference documents.' if research_docs else ''}
-Please include the source links for all the research.
+
+## Research Request
+
+{research_query}
+
+## Instructions
+
+Based on {'the reference documents above and ' if research_docs else ''}the research request, provide:
+- Key facts and background information
+- Relevant sources and references (with URLs where possible)
+- Interview suggestions (people to talk to)
+- Visual/archive material recommendations
+
+{f'IMPORTANT: Incorporate and build upon the information from the {len(research_docs)} provided reference document(s). Reference specific details from them where relevant.' if research_docs else ''}
 
 Format your response with:
 - Clear sections with headers
@@ -1578,6 +1596,7 @@ Format your response with:
     response_data = {
         "result": result,
         "title": title,
+        "query": research_query,
         "saved": False,
         "documentsUsed": len(research_docs)
     }
