@@ -652,7 +652,7 @@ def upload_asset_file():
 
 @app.route("/api/assets/<asset_id>/file", methods=["GET"])
 def get_asset_file(asset_id):
-    """Download an asset's file (streams large files)."""
+    """Download an asset's file using signed URL redirect for large files."""
     asset = get_doc('assets', asset_id)
     if not asset:
         return jsonify({"error": "Asset not found"}), 404
@@ -671,23 +671,26 @@ def get_asset_file(asset_id):
         filename = asset.get('filename', 'download')
         file_size = asset.get('sizeBytes', 0)
 
-        # Stream large files to avoid memory issues
-        def generate():
-            # Download in chunks of 10MB
-            chunk_size = 10 * 1024 * 1024
-            start = 0
-            while start < file_size:
-                end = min(start + chunk_size - 1, file_size - 1)
-                chunk = blob.download_as_bytes(start=start, end=end)
-                yield chunk
-                start = end + 1
+        # For large files (>50MB), use signed URL redirect
+        if file_size > 50 * 1024 * 1024:
+            from datetime import timedelta
+            signed_url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(minutes=15),
+                method="GET",
+                response_disposition=f'attachment; filename="{filename}"'
+            )
+            from flask import redirect
+            return redirect(signed_url)
 
+        # For smaller files, download directly
+        content = blob.download_as_bytes()
         return Response(
-            generate(),
+            content,
             mimetype=content_type,
             headers={
                 'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Length': str(file_size)
+                'Content-Length': str(len(content))
             }
         )
     except Exception as e:

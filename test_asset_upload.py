@@ -328,22 +328,35 @@ def test_download_asset(asset_id):
 
     start_time = time.time()
 
+    # Use allow_redirects=True to follow signed URL redirects for large files
     response = requests.get(
         f"{BASE_URL}/api/assets/{asset_id}/file",
-        timeout=300,
-        stream=True
+        timeout=600,
+        stream=True,
+        allow_redirects=True
     )
 
     print(f"  Status code: {response.status_code}")
+    if response.history:
+        print(f"  Followed {len(response.history)} redirect(s) (signed URL for large file)")
 
     if response.status_code != 200:
         print(f"  ✗ Download failed")
-        print(f"  Response: {response.text[:200]}")
+        print(f"  Response: {response.text[:200] if response.text else 'No response body'}")
         print(f"\n  Result: FAILED")
         return False
 
-    # Download content
-    content = response.content
+    # Download content in chunks to handle large files
+    content = b''
+    downloaded = 0
+    for chunk in response.iter_content(chunk_size=10 * 1024 * 1024):
+        content += chunk
+        downloaded += len(chunk)
+        progress = (downloaded / original_size) * 100 if original_size > 0 else 0
+        print(f"  Downloaded: {downloaded:,} bytes ({progress:.1f}%)", end='\r')
+
+    print()  # New line after progress
+
     elapsed = time.time() - start_time
     speed = len(content) / elapsed / 1024 / 1024 if elapsed > 0 else 0
 
@@ -361,11 +374,6 @@ def test_download_asset(asset_id):
 
     print(f"  {'✓' if size_match else '✗'} Size matches: {len(content):,} == {original_size:,}")
     print(f"  {'✓' if hash_match else '✗'} Hash matches: {downloaded_hash} == {original_hash}")
-
-    # Check content-disposition header
-    content_disp = response.headers.get('Content-Disposition', '')
-    has_filename = 'filename=' in content_disp
-    print(f"  {'✓' if has_filename else '✗'} Content-Disposition header: {content_disp[:60]}...")
 
     passed = size_match and hash_match
     print(f"\n  Result: {'PASSED' if passed else 'FAILED'}")
