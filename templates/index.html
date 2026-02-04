@@ -37,6 +37,7 @@
         marked.use({ renderer });
     </script>
     <meta name="theme-color" content="#2563eb">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
@@ -2868,21 +2869,21 @@
                         : f.status === 'in-progress' ? '<span class="badge badge-blue">In Progress</span>'
                         : '<span class="badge badge-gray">New</span>';
 
-                    return \`
+                    return `
                         <div class="feedback-item">
                             <div class="feedback-item-header">
-                                <span>\${typeIcon} \${f.type}</span>
-                                \${statusBadge}
+                                <span>${typeIcon} ${f.type}</span>
+                                ${statusBadge}
                             </div>
-                            <p class="feedback-item-text">\${f.text}</p>
+                            <p class="feedback-item-text">${f.text}</p>
                             <div class="feedback-item-meta">
-                                <span>\${f.name}</span>
-                                <span>v\${f.version || 'unknown'}</span>
-                                <span>\${date}</span>
+                                <span>${f.name || 'Anonymous'}</span>
+                                <span>v${f.version || 'unknown'}</span>
+                                <span>${date}</span>
                             </div>
-                            \${f.response ? \`<div class="feedback-response"><strong>Response:</strong> \${f.response}</div>\` : ''}
+                            ${f.response ? `<div class="feedback-response"><strong>Response:</strong> ${f.response}</div>` : ''}
                         </div>
-                    \`;
+                    `;
                 }).join('');
 
             } catch (error) {
