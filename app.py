@@ -652,7 +652,7 @@ def upload_asset_file():
 
 @app.route("/api/assets/<asset_id>/file", methods=["GET"])
 def get_asset_file(asset_id):
-    """Download an asset's file with streaming for large files."""
+    """Download an asset's file with chunked streaming."""
     asset = get_doc('assets', asset_id)
     if not asset:
         return jsonify({"error": "Asset not found"}), 404
@@ -674,18 +674,30 @@ def get_asset_file(asset_id):
         blob.reload()
         file_size = blob.size or asset.get('sizeBytes', 0)
 
-        # Stream the file using a temporary file to avoid memory issues
-        import tempfile
+        # For files under 100MB, download directly (Cloud Run has 1GB memory)
+        if file_size < 100 * 1024 * 1024:
+            content = blob.download_as_bytes()
+            return Response(
+                content,
+                mimetype=content_type,
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Length': str(len(content))
+                }
+            )
+
+        # For larger files, use range requests to stream
+        chunk_size = 25 * 1024 * 1024  # 25MB chunks
 
         def generate():
-            with tempfile.SpooledTemporaryFile(max_size=50*1024*1024) as tmp:
-                blob.download_to_file(tmp)
-                tmp.seek(0)
-                while True:
-                    chunk = tmp.read(1024 * 1024)  # 1MB chunks
-                    if not chunk:
-                        break
-                    yield chunk
+            start = 0
+            while start < file_size:
+                end = min(start + chunk_size, file_size)
+                # Download chunk using raw_download
+                chunk = blob.download_as_bytes(start=start, end=end-1)
+                yield chunk
+                start = end
+                print(f"Streamed chunk: {start}/{file_size} bytes")
 
         return Response(
             generate(),
