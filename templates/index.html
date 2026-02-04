@@ -1388,19 +1388,10 @@
 
                 console.log('Save response:', response);
 
-                // Show success with asset and download count
+                // Show success with asset count
                 let msg = 'Research saved successfully!';
                 if (response.assetsCreated > 0) {
                     msg += `\n${response.assetsCreated} reference links added to Assets.`;
-                }
-                if (response.downloadsCompleted > 0) {
-                    msg += `\n${response.downloadsCompleted} pages downloaded as PDFs.`;
-                }
-                if (response.downloadsFailed > 0) {
-                    msg += `\n${response.downloadsFailed} downloads failed.`;
-                }
-                if (response.downloadsPending > 0) {
-                    msg += `\n${response.downloadsPending} pending (use Download All).`;
                 }
                 alert(msg);
 
@@ -1705,115 +1696,18 @@
             `;
         }
 
-        // Auto-refresh for assets with pending downloads
-        let assetsRefreshInterval = null;
-
-        function startAssetsAutoRefresh() {
-            if (assetsRefreshInterval) return; // Already running
-            console.log('Starting assets auto-refresh...');
-            assetsRefreshInterval = setInterval(async () => {
-                if (state.currentTab !== 'assets') {
-                    stopAssetsAutoRefresh();
-                    return;
-                }
-                // Check if there are still pending/downloading assets
-                const hasPending = state.assets.some(a =>
-                    a.status === 'Pending' || a.status === 'Downloading'
-                );
-                if (!hasPending) {
-                    stopAssetsAutoRefresh();
-                    return;
-                }
-                console.log('Auto-refreshing assets...');
-                await loadProjectData(state.currentProject);
-                render();
-            }, 5000); // Refresh every 5 seconds
-        }
-
-        function stopAssetsAutoRefresh() {
-            if (assetsRefreshInterval) {
-                console.log('Stopping assets auto-refresh');
-                clearInterval(assetsRefreshInterval);
-                assetsRefreshInterval = null;
-            }
-        }
-
-        async function downloadPendingAssets() {
-            const pendingCount = state.assets.filter(a => a.status === 'Pending').length;
-            if (pendingCount === 0) {
-                alert('No pending downloads');
-                return;
-            }
-
-            // Update button to show progress
-            const btn = event.target;
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⏳ Downloading...';
-            btn.disabled = true;
-
-            try {
-                const response = await api(`/api/projects/${state.selectedProject}/assets/download-pending`, 'POST');
-                console.log('Download pending response:', response);
-
-                let msg = `Downloaded: ${response.downloadsCompleted}`;
-                if (response.downloadsFailed > 0) {
-                    msg += `, Failed: ${response.downloadsFailed}`;
-                }
-                if (response.remainingPending > 0) {
-                    msg += `, Remaining: ${response.remainingPending}`;
-                }
-                alert(msg);
-
-                // Reload assets
-                await loadProjectData(state.currentProject);
-                render();
-
-            } catch (error) {
-                console.error('Error downloading pending:', error);
-                alert('Error: ' + error.message);
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        }
-
         function renderAssets() {
             // Separate source documents from regular assets
             const sourceAssets = state.assets.filter(a => a.isSourceDocument);
             const regularAssets = state.assets.filter(a => !a.isSourceDocument);
 
-            // Count pending/downloading for progress display
-            const pendingCount = regularAssets.filter(a => a.status === 'Pending').length;
-            const downloadingCount = regularAssets.filter(a => a.status === 'Downloading').length;
-            const downloadedCount = regularAssets.filter(a => a.status === 'Downloaded').length;
-
-            // Start auto-refresh if there are pending/downloading
-            if (pendingCount > 0 || downloadingCount > 0) {
-                startAssetsAutoRefresh();
-            }
-
-            const progressBar = (pendingCount > 0 || downloadingCount > 0) ? `
-                <div class="download-progress-bar">
-                    <div class="progress-info">
-                        <span>📥 Downloads: ${downloadedCount} complete</span>
-                        ${downloadingCount > 0 ? `<span class="text-blue">⏳ ${downloadingCount} in progress</span>` : ''}
-                        ${pendingCount > 0 ? `<span class="text-muted">${pendingCount} pending</span>` : ''}
-                    </div>
-                    <div class="progress-track">
-                        <div class="progress-fill" style="width: ${Math.round(downloadedCount / (downloadedCount + pendingCount + downloadingCount) * 100)}%"></div>
-                    </div>
-                </div>
-            ` : '';
-
             return `
                 <div class="section-header">
                     <h2>Assets</h2>
                     <div class="flex gap-2">
-                        ${pendingCount > 0 ? `<button class="btn btn-secondary" onclick="downloadPendingAssets()">⬇️ Download Pending (${pendingCount})</button>` : ''}
                         <button class="btn btn-primary" onclick="showAddModal('asset')">+ Add</button>
                     </div>
                 </div>
-                ${progressBar}
 
                 ${sourceAssets.length > 0 ? `
                     <div class="card">
@@ -1852,16 +1746,9 @@
                 ` : ''}
 
                 ${regularAssets.map(a => {
-                    const statusBadge = a.status === 'Downloaded' ? 'badge-green'
-                        : a.status === 'Downloading' ? 'badge-blue'
-                        : a.status === 'Pending' ? 'badge-purple'
-                        : a.status === 'Failed' ? 'badge-red'
+                    const statusBadge = a.status === 'Identified' ? 'badge-green'
+                        : a.status === 'Acquired' ? 'badge-blue'
                         : 'badge-orange';
-                    const statusIcon = a.status === 'Downloaded' ? '✓'
-                        : a.status === 'Downloading' ? '⏳'
-                        : a.status === 'Pending' ? '⋯'
-                        : a.status === 'Failed' ? '✗'
-                        : '';
                     return `
                     <div class="card">
                         <div class="item-header">
@@ -1869,18 +1756,12 @@
                                 <div class="flex gap-2 mb-1 items-center">
                                     <h3>${a.title}</h3>
                                     <span class="badge badge-gray">${a.type}</span>
-                                    <span class="badge ${statusBadge}">${statusIcon} ${a.status}</span>
+                                    <span class="badge ${statusBadge}">${a.status}</span>
                                 </div>
-                                <p class="text-sm"><a href="${a.source}" target="_blank" class="text-link">🔗 ${truncateUrl(a.source)}</a></p>
-                                ${a.gcsPath ? `<p class="text-sm text-success mt-1">📄 PDF: ${a.filename || 'document.pdf'} (${formatBytes(a.sizeBytes || 0)})</p>` : ''}
-                                ${a.downloadError ? `<p class="text-sm text-error mt-1">Error: ${a.downloadError}</p>` : ''}
+                                ${a.source ? `<p class="text-sm"><a href="${a.source}" target="_blank" class="text-link">🔗 ${truncateUrl(a.source)}</a></p>` : ''}
                                 ${a.notes && !a.isResearchLink ? `<p class="text-sm mt-2 text-muted">${a.notes}</p>` : ''}
                             </div>
                             <div class="item-actions">
-                                ${a.gcsPath ? `
-                                    <button class="btn-icon" onclick="viewSourceDocument('${a.gcsPath}')" title="View PDF">👁️</button>
-                                    <a href="/api/download/${a.gcsPath}" class="btn-icon" title="Download PDF">⬇️</a>
-                                ` : ''}
                                 <button class="btn-icon" onclick="showEditModal('asset', '${a.id}')">✏️</button>
                                 <button class="btn-icon" onclick="deleteItem('assets', '${a.id}')">🗑️</button>
                             </div>
@@ -2603,10 +2484,12 @@
                             <option value="Audio">Audio</option>
                             <option value="Image">Image</option>
                             <option value="Document">Document</option>
+                            <option value="Reference">Reference</option>
                             <option value="Other">Other</option>
                         </select>
-                        <input type="text" name="source" placeholder="Source">
+                        <input type="text" name="source" placeholder="Source URL">
                         <select name="status">
+                            <option value="Identified">Identified</option>
                             <option value="Needed">Needed</option>
                             <option value="Licensing">Licensing</option>
                             <option value="Acquired">Acquired</option>

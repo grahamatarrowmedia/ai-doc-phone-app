@@ -1,6 +1,5 @@
 """
 Documentary Production App - Flask backend with Firestore and Vertex AI
-Includes source document auto-download for AI research
 """
 import os
 import re
@@ -1077,122 +1076,9 @@ def delete_episode_research(episode_id):
         return jsonify({"error": str(e)}), 500
 
 
-def download_research_link(asset_id, url, project_id, timeout=15):
-    """Download a research link and convert to PDF, updating the asset."""
-    try:
-        print(f"[DEBUG] Downloading research link: {url[:60]}...")
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-        response.raise_for_status()
-
-        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
-        parsed_url = urlparse(url)
-        path = parsed_url.path.strip('/')
-
-        if path:
-            base_filename = path.split('/')[-1]
-            base_filename = re.sub(r'[^\w\-.]', '_', base_filename)
-        else:
-            base_filename = parsed_url.netloc.replace('.', '_')
-
-        if '.' in base_filename:
-            base_filename = base_filename.rsplit('.', 1)[0]
-
-        # Limit filename length
-        base_filename = base_filename[:50]
-
-        url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-        bucket = storage_client.bucket(STORAGE_BUCKET)
-
-        gcs_path = None
-        size_bytes = 0
-        filename = None
-
-        if content_type == 'application/pdf':
-            # Already a PDF
-            blob_path = f"{project_id}/research/{url_hash}_{base_filename}.pdf"
-            blob = bucket.blob(blob_path)
-            blob.upload_from_string(response.content, content_type='application/pdf')
-            gcs_path = blob_path
-            size_bytes = len(response.content)
-            filename = f"{base_filename}.pdf"
-
-        elif 'html' in content_type or 'text' in content_type:
-            # Convert HTML to PDF
-            pdf_bytes = convert_to_pdf(response.text, url)
-            if pdf_bytes:
-                blob_path = f"{project_id}/research/{url_hash}_{base_filename}.pdf"
-                blob = bucket.blob(blob_path)
-                blob.upload_from_string(pdf_bytes, content_type='application/pdf')
-                gcs_path = blob_path
-                size_bytes = len(pdf_bytes)
-                filename = f"{base_filename}.pdf"
-            else:
-                # Fallback to HTML if PDF conversion fails
-                blob_path = f"{project_id}/research/{url_hash}_{base_filename}.html"
-                blob = bucket.blob(blob_path)
-                blob.upload_from_string(response.content, content_type='text/html')
-                gcs_path = blob_path
-                size_bytes = len(response.content)
-                filename = f"{base_filename}.html"
-        else:
-            # Other content types - store as-is
-            ext = content_type.split('/')[-1] if '/' in content_type else 'bin'
-            blob_path = f"{project_id}/research/{url_hash}_{base_filename}.{ext}"
-            blob = bucket.blob(blob_path)
-            blob.upload_from_string(response.content, content_type=content_type)
-            gcs_path = blob_path
-            size_bytes = len(response.content)
-            filename = f"{base_filename}.{ext}"
-
-        # Update the asset with download info
-        if gcs_path:
-            asset_ref = db.collection(COLLECTIONS['assets']).document(asset_id)
-            asset_ref.update({
-                'gcsPath': gcs_path,
-                'sizeBytes': size_bytes,
-                'filename': filename,
-                'status': 'Downloaded',
-                'updatedAt': datetime.utcnow().isoformat()
-            })
-            print(f"[DEBUG] Downloaded and saved: {filename} ({size_bytes} bytes)")
-            return True
-
-    except Exception as e:
-        print(f"[ERROR] Failed to download {url}: {e}")
-        # Update asset status to failed
-        try:
-            asset_ref = db.collection(COLLECTIONS['assets']).document(asset_id)
-            asset_ref.update({
-                'status': 'Failed',
-                'downloadError': str(e)[:200],
-                'updatedAt': datetime.utcnow().isoformat()
-            })
-        except:
-            pass
-        return False
-
-
-def process_research_links_async(links_to_download):
-    """Background thread to download research links and convert to PDF."""
-    print(f"[DEBUG] Starting async download of {len(links_to_download)} research links")
-    success_count = 0
-    error_count = 0
-
-    for asset_id, url, project_id in links_to_download:
-        if download_research_link(asset_id, url, project_id):
-            success_count += 1
-        else:
-            error_count += 1
-
-    print(f"[DEBUG] Research link download complete: {success_count} success, {error_count} errors")
-
-
 @app.route("/api/episodes/<episode_id>/research", methods=["PUT"])
 def save_episode_research(episode_id):
-    """Save research to an episode and extract links as assets with PDF downloads."""
+    """Save research to an episode and extract links as reference assets."""
     print(f"[DEBUG] Saving research for episode {episode_id}")
     try:
         data = request.get_json()
@@ -1219,9 +1105,9 @@ def save_episode_research(episode_id):
         })
         print(f"[DEBUG] Research saved for episode {episode_id}, length: {len(research)}")
 
-        # Extract markdown links and create assets
+        # Extract markdown links and create assets as reference links
         links_created = 0
-        links_to_download = []
+        markdown_links = []
 
         if project_id:
             # Find all markdown links: [text](url)
@@ -1241,14 +1127,14 @@ def save_episode_research(episode_id):
                         print(f"[DEBUG] Asset already exists for URL: {link_url[:50]}...")
                         continue
 
-                    # Create asset for this link with "Downloading" status
+                    # Create asset for this link as a reference (link only, no download)
                     asset_data = {
                         "projectId": project_id,
                         "episodeId": episode_id,
                         "title": link_text[:100],
                         "type": "Reference",
                         "source": link_url,
-                        "status": "Downloading",
+                        "status": "Identified",
                         "isSourceDocument": False,
                         "isResearchLink": True,
                         "sourceEpisode": episode_title,
@@ -1258,111 +1144,20 @@ def save_episode_research(episode_id):
                     }
                     doc_ref = db.collection(COLLECTIONS['assets']).document()
                     doc_ref.set(asset_data)
-                    asset_id = doc_ref.id
                     links_created += 1
-                    links_to_download.append((asset_id, link_url, project_id))
                     print(f"[DEBUG] Created asset: {link_text[:50]}...")
                 except Exception as link_error:
                     print(f"[ERROR] Failed to create asset for {link_url}: {link_error}")
 
-        # Download links synchronously (Cloud Run terminates idle instances)
-        downloads_completed = 0
-        downloads_failed = 0
-        MAX_DOWNLOADS = 3  # Limit to avoid Cloud Run request timeout (PDF conversion is slow)
-
-        if links_to_download:
-            print(f"[DEBUG] Downloading up to {MAX_DOWNLOADS} of {len(links_to_download)} links")
-            for asset_id, link_url, proj_id in links_to_download[:MAX_DOWNLOADS]:
-                if download_research_link(asset_id, link_url, proj_id, timeout=10):
-                    downloads_completed += 1
-                else:
-                    downloads_failed += 1
-
-            # Mark remaining links as "Pending" (not downloaded yet)
-            for asset_id, link_url, proj_id in links_to_download[MAX_DOWNLOADS:]:
-                try:
-                    asset_ref = db.collection(COLLECTIONS['assets']).document(asset_id)
-                    asset_ref.update({
-                        'status': 'Pending',
-                        'updatedAt': datetime.utcnow().isoformat()
-                    })
-                except:
-                    pass
-
-        print(f"[DEBUG] Created {links_created} new assets, downloaded {downloads_completed}, failed {downloads_failed}")
+        print(f"[DEBUG] Created {links_created} new reference assets")
         return jsonify({
             "success": True,
             "episodeId": episode_id,
-            "linksExtracted": len(markdown_links) if project_id else 0,
-            "assetsCreated": links_created,
-            "downloadsCompleted": downloads_completed,
-            "downloadsFailed": downloads_failed,
-            "downloadsPending": max(0, len(links_to_download) - MAX_DOWNLOADS)
+            "linksExtracted": len(markdown_links),
+            "assetsCreated": links_created
         })
     except Exception as e:
         print(f"[ERROR] Failed to save research: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/projects/<project_id>/assets/download-pending", methods=["POST"])
-def download_pending_assets(project_id):
-    """Download pending research link assets (up to 3 at a time)."""
-    print(f"[DEBUG] Downloading pending assets for project {project_id}")
-    try:
-        # Get pending assets
-        pending_ref = db.collection(COLLECTIONS['assets']).where(
-            'projectId', '==', project_id
-        ).where(
-            'status', '==', 'Pending'
-        ).limit(3)
-
-        pending_docs = list(pending_ref.stream())
-        print(f"[DEBUG] Found {len(pending_docs)} pending assets")
-
-        if not pending_docs:
-            return jsonify({
-                "success": True,
-                "message": "No pending downloads",
-                "downloadsCompleted": 0,
-                "downloadsFailed": 0,
-                "remainingPending": 0
-            })
-
-        downloads_completed = 0
-        downloads_failed = 0
-
-        for doc in pending_docs:
-            asset_data = doc.to_dict()
-            asset_id = doc.id
-            url = asset_data.get('source', '')
-
-            if url:
-                # Update status to Downloading
-                doc.reference.update({'status': 'Downloading', 'updatedAt': datetime.utcnow().isoformat()})
-
-                if download_research_link(asset_id, url, project_id, timeout=15):
-                    downloads_completed += 1
-                else:
-                    downloads_failed += 1
-
-        # Count remaining pending
-        remaining_ref = db.collection(COLLECTIONS['assets']).where(
-            'projectId', '==', project_id
-        ).where(
-            'status', '==', 'Pending'
-        )
-        remaining_count = len(list(remaining_ref.stream()))
-
-        print(f"[DEBUG] Download batch complete: {downloads_completed} success, {downloads_failed} failed, {remaining_count} remaining")
-        return jsonify({
-            "success": True,
-            "downloadsCompleted": downloads_completed,
-            "downloadsFailed": downloads_failed,
-            "remainingPending": remaining_count
-        })
-
-    except Exception as e:
-        print(f"[ERROR] Failed to download pending assets: {e}")
         return jsonify({"error": str(e)}), 500
 
 
