@@ -652,7 +652,9 @@ def upload_asset_file():
 
 @app.route("/api/assets/<asset_id>/file", methods=["GET"])
 def get_asset_file(asset_id):
-    """Download an asset's file."""
+    """Download an asset's file using chunked streaming."""
+    from flask import stream_with_context
+
     asset = get_doc('assets', asset_id)
     if not asset:
         return jsonify({"error": "Asset not found"}), 404
@@ -670,19 +672,35 @@ def get_asset_file(asset_id):
         content_type = asset.get('mimeType', 'application/octet-stream')
         filename = asset.get('filename', 'download')
 
-        # Download the file (Cloud Run has 1GB memory, should handle up to ~500MB files)
-        print(f"Downloading asset file: {asset['gcsPath']}")
-        content = blob.download_as_bytes()
-        print(f"Downloaded {len(content)} bytes")
+        # Get file size
+        blob.reload()
+        file_size = blob.size
+
+        print(f"Streaming asset file: {asset['gcsPath']} ({file_size} bytes)")
+
+        # Stream in chunks using GCS range requests to avoid response size limit
+        chunk_size = 10 * 1024 * 1024  # 10MB chunks
+
+        @stream_with_context
+        def generate():
+            offset = 0
+            while offset < file_size:
+                end = min(offset + chunk_size, file_size)
+                # Download chunk using byte range
+                chunk = blob.download_as_bytes(start=offset, end=end - 1)
+                print(f"Streamed {offset}-{end} of {file_size}")
+                yield chunk
+                offset = end
 
         return Response(
-            content,
+            generate(),
             mimetype=content_type,
             headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Length': str(len(content))
-            }
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            },
+            direct_passthrough=True
         )
+
     except Exception as e:
         print(f"Error downloading asset file: {e}")
         import traceback
