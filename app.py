@@ -652,13 +652,8 @@ def upload_asset_file():
 
 @app.route("/api/assets/<asset_id>/file", methods=["GET"])
 def get_asset_file(asset_id):
-    """Download an asset's file - uses signed URL redirect for large files."""
-    from flask import redirect
-    from datetime import timedelta
-    import google.auth
-    from google.auth import iam
-    from google.auth.transport.requests import Request
-    import google.oauth2.service_account
+    """Download an asset's file using streaming for all sizes."""
+    from flask import stream_with_context
 
     asset = get_doc('assets', asset_id)
     if not asset:
@@ -681,68 +676,41 @@ def get_asset_file(asset_id):
         blob.reload()
         file_size = blob.size
 
-        print(f"Download request for asset file: {asset['gcsPath']} ({file_size} bytes)")
+        print(f"Streaming asset file: {asset['gcsPath']} ({file_size} bytes)")
 
-        # For large files (>30MB), use signed URL redirect to avoid Cloud Run timeout
-        MAX_DIRECT_DOWNLOAD = 30 * 1024 * 1024  # 30MB
+        # Stream using GCS range requests - this works within Cloud Run's response limits
+        # Each chunk is fetched separately, avoiding memory issues
+        chunk_size = 5 * 1024 * 1024  # 5MB chunks for faster streaming
 
-        if file_size > MAX_DIRECT_DOWNLOAD:
-            print(f"Large file detected, generating signed URL for direct GCS download")
+        def generate():
+            """Generator that yields file chunks using range requests."""
+            offset = 0
+            chunk_num = 0
+            while offset < file_size:
+                end = min(offset + chunk_size, file_size)
+                try:
+                    # GCS range requests are inclusive on both ends
+                    chunk = blob.download_as_bytes(start=offset, end=end - 1)
+                    chunk_num += 1
+                    if chunk_num % 10 == 0:  # Log every 10 chunks
+                        print(f"Chunk {chunk_num}: {offset}-{end} of {file_size} ({100*end/file_size:.1f}%)")
+                    yield chunk
+                    offset = end
+                except Exception as e:
+                    print(f"Error downloading chunk at offset {offset}: {e}")
+                    raise
 
-            # Get credentials
-            credentials, project = google.auth.default()
-            auth_request = Request()
+            print(f"Stream complete: {chunk_num} chunks, {file_size} bytes total")
 
-            # Refresh credentials to get access token
-            if hasattr(credentials, 'refresh'):
-                credentials.refresh(auth_request)
-
-            # Get service account email from metadata server (most reliable method on Cloud Run)
-            import requests as req
-            metadata_url = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email'
-            resp = req.get(metadata_url, headers={'Metadata-Flavor': 'Google'}, timeout=5)
-            service_account_email = resp.text.strip()
-
-            print(f"Using service account: {service_account_email}")
-
-            # Create IAM signer for signing without local private key
-            signer = iam.Signer(
-                auth_request,
-                credentials,
-                service_account_email
-            )
-
-            # Create signing credentials wrapper
-            signing_credentials = google.oauth2.service_account.Credentials(
-                signer=signer,
-                service_account_email=service_account_email,
-                token_uri='https://oauth2.googleapis.com/token',
-                project_id=project,
-            )
-
-            # Generate signed URL (valid for 1 hour)
-            signed_url = blob.generate_signed_url(
-                version='v4',
-                expiration=timedelta(hours=1),
-                method='GET',
-                response_disposition=f'attachment; filename="{filename}"',
-                response_type=content_type,
-                credentials=signing_credentials,
-            )
-
-            print(f"Redirecting to signed URL for {filename}")
-            return redirect(signed_url, code=302)
-
-        # For small files, serve directly
-        print(f"Small file, serving directly")
-        content = blob.download_as_bytes()
         return Response(
-            content,
+            stream_with_context(generate()),
             mimetype=content_type,
             headers={
                 'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Length': str(len(content))
-            }
+                'Content-Length': str(file_size),
+                'Accept-Ranges': 'bytes',
+            },
+            direct_passthrough=True
         )
 
     except Exception as e:
