@@ -652,8 +652,12 @@ def upload_asset_file():
 
 @app.route("/api/assets/<asset_id>/file", methods=["GET"])
 def get_asset_file(asset_id):
-    """Download an asset's file using chunked streaming."""
-    from flask import stream_with_context
+    """Download an asset's file - uses signed URL redirect for large files."""
+    from flask import redirect
+    from datetime import timedelta
+    import google.auth
+    from google.auth import iam
+    from google.auth.transport.requests import Request
 
     asset = get_doc('assets', asset_id)
     if not asset:
@@ -676,29 +680,65 @@ def get_asset_file(asset_id):
         blob.reload()
         file_size = blob.size
 
-        print(f"Streaming asset file: {asset['gcsPath']} ({file_size} bytes)")
+        print(f"Download request for asset file: {asset['gcsPath']} ({file_size} bytes)")
 
-        # Stream in chunks using GCS range requests to avoid response size limit
-        chunk_size = 10 * 1024 * 1024  # 10MB chunks
+        # For large files (>30MB), use signed URL redirect to avoid Cloud Run timeout
+        MAX_DIRECT_DOWNLOAD = 30 * 1024 * 1024  # 30MB
 
-        @stream_with_context
-        def generate():
-            offset = 0
-            while offset < file_size:
-                end = min(offset + chunk_size, file_size)
-                # Download chunk using byte range
-                chunk = blob.download_as_bytes(start=offset, end=end - 1)
-                print(f"Streamed {offset}-{end} of {file_size}")
-                yield chunk
-                offset = end
+        if file_size > MAX_DIRECT_DOWNLOAD:
+            print(f"Large file detected, generating signed URL for direct GCS download")
 
+            # Get credentials and service account email
+            credentials, project = google.auth.default()
+
+            # Get service account email
+            if hasattr(credentials, 'service_account_email'):
+                service_account_email = credentials.service_account_email
+            else:
+                # Fallback: get from metadata server
+                import requests as req
+                metadata_url = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email'
+                resp = req.get(metadata_url, headers={'Metadata-Flavor': 'Google'}, timeout=5)
+                service_account_email = resp.text
+
+            print(f"Using service account: {service_account_email}")
+
+            # Refresh credentials if needed
+            auth_request = Request()
+            if hasattr(credentials, 'refresh'):
+                credentials.refresh(auth_request)
+
+            # Create IAM-based signing credentials
+            signing_credentials = iam.Signer(
+                auth_request,
+                credentials,
+                service_account_email
+            )
+
+            # Generate signed URL using IAM signer (valid for 1 hour)
+            signed_url = blob.generate_signed_url(
+                version='v4',
+                expiration=timedelta(hours=1),
+                method='GET',
+                response_disposition=f'attachment; filename="{filename}"',
+                response_type=content_type,
+                service_account_email=service_account_email,
+                access_token=credentials.token,
+            )
+
+            print(f"Redirecting to signed URL for {filename}")
+            return redirect(signed_url, code=302)
+
+        # For small files, serve directly
+        print(f"Small file, serving directly")
+        content = blob.download_as_bytes()
         return Response(
-            generate(),
+            content,
             mimetype=content_type,
             headers={
-                'Content-Disposition': f'attachment; filename="{filename}"'
-            },
-            direct_passthrough=True
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Length': str(len(content))
+            }
         )
 
     except Exception as e:
