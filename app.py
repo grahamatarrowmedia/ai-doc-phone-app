@@ -57,7 +57,60 @@ COLLECTIONS = {
     'shots': f'{COLLECTION_PREFIX}doc_shots',
     'assets': f'{COLLECTION_PREFIX}doc_assets',
     'scripts': f'{COLLECTION_PREFIX}doc_scripts',
-    'feedback': f'{COLLECTION_PREFIX}doc_feedback'
+    'feedback': f'{COLLECTION_PREFIX}doc_feedback',
+    # Production Factory collections
+    'research_documents': f'{COLLECTION_PREFIX}doc_research_documents',
+    'archive_logs': f'{COLLECTION_PREFIX}doc_archive_logs',
+    'interview_transcripts': f'{COLLECTION_PREFIX}doc_interview_transcripts',
+    'script_versions': f'{COLLECTION_PREFIX}doc_script_versions',
+    'compliance_items': f'{COLLECTION_PREFIX}doc_compliance_items',
+    'agent_tasks': f'{COLLECTION_PREFIX}doc_agent_tasks',
+}
+
+# ============== Production Factory Constants ==============
+
+# Episode workflow phases
+EPISODE_PHASES = {
+    'research': {'order': 1, 'name': 'Research', 'description': 'Deep research and fact gathering'},
+    'archive': {'order': 2, 'name': 'Archive', 'description': 'Archive collection and processing'},
+    'script': {'order': 3, 'name': 'Script', 'description': 'Script generation and refinement'},
+    'voiceover': {'order': 4, 'name': 'Voiceover', 'description': 'VO generation and QC'},
+    'assembly': {'order': 5, 'name': 'Assembly', 'description': 'Quickture final assembly'},
+}
+
+# Phase statuses
+PHASE_STATUSES = ['pending', 'in_progress', 'review', 'approved', 'rejected']
+
+# Script version types
+SCRIPT_VERSION_TYPES = ['V1_initial', 'V2_producer_review', 'V3_interview_additions', 'V4_locked']
+
+# AI Agent types for script generation
+AGENT_TYPES = {
+    'research_specialist': {
+        'name': 'Research Specialist',
+        'role': 'Foundation & Fact Accuracy',
+        'responsibilities': ['Verify timeline accuracy', 'Ensure technical explanations', 'Flag claims requiring corroboration', 'Suggest narrative structure']
+    },
+    'archive_specialist': {
+        'name': 'Archive Specialist',
+        'role': 'Visual Storytelling',
+        'responsibilities': ['Match archive to script moments', 'Identify visual sequences', 'Flag missing footage', 'Suggest pacing']
+    },
+    'interview_producer': {
+        'name': 'Interview Producer',
+        'role': 'Human Voices & Emotional Beats',
+        'responsibilities': ['Extract best soundbites', 'Identify emotional peaks', 'Match interview content to structure', 'Suggest questions for gaps']
+    },
+    'script_writer': {
+        'name': 'Script Writer',
+        'role': 'Narrative Construction',
+        'responsibilities': ['Build voiceover narrative', 'Structure story arc', 'Write to broadcast standards', 'Match tone to series bible']
+    },
+    'fact_checker': {
+        'name': 'Fact Checker',
+        'role': 'Verification & Compliance',
+        'responsibilities': ['Cross-reference every claim', 'Flag legal review items', 'Verify dates and names', 'Generate source citations']
+    }
 }
 
 
@@ -109,6 +162,229 @@ def delete_doc(collection_name, doc_id):
     """Delete a document."""
     db.collection(COLLECTIONS[collection_name]).document(doc_id).delete()
     return True
+
+
+# ============== Production Factory Helper Functions ==============
+
+def initialize_episode_workflow(episode_id):
+    """Initialize workflow phases for a new episode."""
+    workflow = {
+        'currentPhase': 'research',
+        'phases': {}
+    }
+    for phase_key, phase_info in EPISODE_PHASES.items():
+        workflow['phases'][phase_key] = {
+            'status': 'pending' if phase_info['order'] > 1 else 'in_progress',
+            'startedAt': None,
+            'completedAt': None,
+            'reviewNotes': [],
+            'assignedTo': None
+        }
+    # Set first phase as in_progress
+    workflow['phases']['research']['startedAt'] = datetime.utcnow().isoformat()
+    return workflow
+
+
+def update_episode_phase(episode_id, phase, status, notes=None):
+    """Update an episode's workflow phase status."""
+    episode = get_doc('episodes', episode_id)
+    if not episode:
+        return None
+
+    workflow = episode.get('workflow', initialize_episode_workflow(episode_id))
+
+    if phase not in workflow['phases']:
+        return None
+
+    workflow['phases'][phase]['status'] = status
+
+    if status == 'in_progress' and not workflow['phases'][phase]['startedAt']:
+        workflow['phases'][phase]['startedAt'] = datetime.utcnow().isoformat()
+    elif status == 'approved':
+        workflow['phases'][phase]['completedAt'] = datetime.utcnow().isoformat()
+        # Move to next phase
+        phase_order = EPISODE_PHASES[phase]['order']
+        for next_phase, info in EPISODE_PHASES.items():
+            if info['order'] == phase_order + 1:
+                workflow['currentPhase'] = next_phase
+                workflow['phases'][next_phase]['status'] = 'in_progress'
+                workflow['phases'][next_phase]['startedAt'] = datetime.utcnow().isoformat()
+                break
+
+    if notes:
+        workflow['phases'][phase]['reviewNotes'].append({
+            'text': notes,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+
+    return update_doc('episodes', episode_id, {'workflow': workflow})
+
+
+def get_episode_workflow_status(episode_id):
+    """Get detailed workflow status for an episode."""
+    episode = get_doc('episodes', episode_id)
+    if not episode:
+        return None
+
+    workflow = episode.get('workflow', {})
+    current_phase = workflow.get('currentPhase', 'research')
+
+    # Calculate overall progress
+    completed_phases = sum(
+        1 for p in workflow.get('phases', {}).values()
+        if p.get('status') == 'approved'
+    )
+    total_phases = len(EPISODE_PHASES)
+
+    return {
+        'episodeId': episode_id,
+        'currentPhase': current_phase,
+        'currentPhaseName': EPISODE_PHASES.get(current_phase, {}).get('name', 'Unknown'),
+        'progress': (completed_phases / total_phases) * 100,
+        'completedPhases': completed_phases,
+        'totalPhases': total_phases,
+        'phases': workflow.get('phases', {}),
+        'phaseDefinitions': EPISODE_PHASES
+    }
+
+
+def create_episode_with_buckets(data):
+    """Create a new episode with initialized workflow and empty buckets."""
+    # Initialize workflow
+    data['workflow'] = initialize_episode_workflow(None)
+
+    # Initialize buckets (these are logical containers, actual documents stored separately)
+    data['researchBucket'] = {
+        'uploadedDocuments': [],
+        'agentOutputs': [],
+        'factCheckSources': [],
+        'notebookLMSource': None
+    }
+    data['archiveBucket'] = {
+        'quicktureLogs': [],
+        'nasaMetadata': [],
+        'interviewTranscripts': [],
+        'referenceFootage': []
+    }
+    data['scriptWorkspace'] = {
+        'referenceTemplate': None,
+        'currentVersion': None,
+        'versionHistory': [],
+        'producerFeedback': []
+    }
+    data['compliancePackage'] = {
+        'exifMetadataLogs': [],
+        'sourceCitations': [],
+        'archiveLicenses': [],
+        'legalSignoff': None
+    }
+
+    # Episode brief fields
+    data['brief'] = data.get('brief', {
+        'summary': '',
+        'storyBeats': [],
+        'targetInterviewees': [],
+        'archiveRequirements': [],
+        'uniqueAngle': ''
+    })
+
+    return create_doc('episodes', data)
+
+
+def get_docs_by_episode(collection_name, episode_id):
+    """Get all documents from a collection filtered by episode."""
+    collection = db.collection(COLLECTIONS[collection_name])
+    docs = collection.where('episodeId', '==', episode_id).stream()
+    return [doc_to_dict(doc) for doc in docs]
+
+
+def get_docs_by_series(collection_name, series_id):
+    """Get all documents from a collection filtered by series."""
+    collection = db.collection(COLLECTIONS[collection_name])
+    docs = collection.where('seriesId', '==', series_id).stream()
+    return [doc_to_dict(doc) for doc in docs]
+
+
+def create_agent_task(episode_id, agent_type, task_type, input_data):
+    """Create a new AI agent task."""
+    task_data = {
+        'episodeId': episode_id,
+        'agentType': agent_type,
+        'agentInfo': AGENT_TYPES.get(agent_type, {}),
+        'taskType': task_type,
+        'status': 'pending',
+        'inputData': input_data,
+        'outputData': None,
+        'startedAt': None,
+        'completedAt': None,
+        'error': None
+    }
+    return create_doc('agent_tasks', task_data)
+
+
+def update_agent_task(task_id, status, output_data=None, error=None):
+    """Update an agent task status."""
+    update_data = {'status': status}
+
+    if status == 'in_progress':
+        update_data['startedAt'] = datetime.utcnow().isoformat()
+    elif status in ['completed', 'failed']:
+        update_data['completedAt'] = datetime.utcnow().isoformat()
+
+    if output_data:
+        update_data['outputData'] = output_data
+    if error:
+        update_data['error'] = error
+
+    return update_doc('agent_tasks', task_id, update_data)
+
+
+def get_project_dashboard_stats(project_id):
+    """Get dashboard statistics for a project."""
+    # Get all series for project
+    series_list = get_all_docs('series', project_id)
+
+    # Get all episodes for project
+    all_episodes = get_all_docs('episodes', project_id)
+
+    # Calculate phase statistics
+    phase_stats = {phase: {'pending': 0, 'in_progress': 0, 'review': 0, 'approved': 0}
+                   for phase in EPISODE_PHASES.keys()}
+
+    for episode in all_episodes:
+        workflow = episode.get('workflow', {})
+        current_phase = workflow.get('currentPhase', 'research')
+        phases = workflow.get('phases', {})
+
+        for phase_key, phase_data in phases.items():
+            status = phase_data.get('status', 'pending')
+            if status in phase_stats[phase_key]:
+                phase_stats[phase_key][status] += 1
+
+    # Episodes by series
+    episodes_by_series = {}
+    for series in series_list:
+        series_episodes = [e for e in all_episodes if e.get('seriesId') == series['id']]
+        episodes_by_series[series['id']] = {
+            'seriesName': series.get('title', 'Unknown'),
+            'totalEpisodes': len(series_episodes),
+            'completedEpisodes': sum(1 for e in series_episodes
+                                     if e.get('workflow', {}).get('currentPhase') == 'assembly'
+                                     and e.get('workflow', {}).get('phases', {}).get('assembly', {}).get('status') == 'approved')
+        }
+
+    return {
+        'projectId': project_id,
+        'totalSeries': len(series_list),
+        'totalEpisodes': len(all_episodes),
+        'phaseStats': phase_stats,
+        'episodesBySeries': episodes_by_series,
+        'bottlenecks': [
+            {'phase': phase, 'count': stats['review']}
+            for phase, stats in phase_stats.items()
+            if stats['review'] > 0
+        ]
+    }
 
 
 # ============== AI Functions ==============
@@ -2486,6 +2762,821 @@ ACT 3: APOLLO 11 CREW
     create_doc('scripts', script)
 
     return jsonify({"message": "Sample data created", "projectId": project_id})
+
+
+# ============== Production Factory Routes ==============
+
+# --- Project Dashboard ---
+@app.route("/api/projects/<project_id>/dashboard", methods=["GET"])
+def get_project_dashboard(project_id):
+    """Get dashboard statistics for a project."""
+    try:
+        stats = get_project_dashboard_stats(project_id)
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/workflow-overview", methods=["GET"])
+def get_project_workflow_overview(project_id):
+    """Get workflow overview for all episodes in a project."""
+    try:
+        episodes = get_all_docs('episodes', project_id)
+        overview = []
+        for episode in episodes:
+            workflow_status = get_episode_workflow_status(episode['id'])
+            if workflow_status:
+                overview.append({
+                    'episodeId': episode['id'],
+                    'episodeTitle': episode.get('title', 'Untitled'),
+                    'seriesId': episode.get('seriesId'),
+                    **workflow_status
+                })
+        return jsonify(overview)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Episode Workflow ---
+@app.route("/api/episodes/<episode_id>/workflow", methods=["GET"])
+def get_episode_workflow(episode_id):
+    """Get workflow status for an episode."""
+    try:
+        status = get_episode_workflow_status(episode_id)
+        if not status:
+            return jsonify({"error": "Episode not found"}), 404
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/workflow/phase", methods=["PUT"])
+def update_workflow_phase(episode_id):
+    """Update an episode's workflow phase status."""
+    try:
+        data = request.get_json()
+        phase = data.get('phase')
+        status = data.get('status')
+        notes = data.get('notes')
+
+        if not phase or not status:
+            return jsonify({"error": "Phase and status are required"}), 400
+
+        if phase not in EPISODE_PHASES:
+            return jsonify({"error": f"Invalid phase. Must be one of: {list(EPISODE_PHASES.keys())}"}), 400
+
+        if status not in PHASE_STATUSES:
+            return jsonify({"error": f"Invalid status. Must be one of: {PHASE_STATUSES}"}), 400
+
+        result = update_episode_phase(episode_id, phase, status, notes)
+        if not result:
+            return jsonify({"error": "Episode not found or update failed"}), 404
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/factory", methods=["POST"])
+def create_episode_factory():
+    """Create a new episode with Production Factory structure."""
+    try:
+        data = request.get_json()
+        episode = create_episode_with_buckets(data)
+        return jsonify(episode), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Research Documents (Research Bucket) ---
+@app.route("/api/episodes/<episode_id>/research-documents", methods=["GET"])
+def get_episode_research_documents(episode_id):
+    """Get all research documents for an episode."""
+    try:
+        docs = get_docs_by_episode('research_documents', episode_id)
+        return jsonify(docs)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/research-documents", methods=["POST"])
+def create_research_document():
+    """Create a new research document."""
+    try:
+        data = request.get_json()
+        # Validate required fields
+        if not data.get('episodeId'):
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Set document type
+        data['documentType'] = data.get('documentType', 'uploaded')  # uploaded, agent_output, fact_check, notebooklm
+        data['confidenceLevel'] = data.get('confidenceLevel', 'unverified')  # verified, probable, requires_confirmation
+
+        doc = create_doc('research_documents', data)
+        return jsonify(doc), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/research-documents/<doc_id>", methods=["PUT"])
+def update_research_document(doc_id):
+    """Update a research document."""
+    try:
+        data = request.get_json()
+        doc = update_doc('research_documents', doc_id, data)
+        return jsonify(doc)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/research-documents/<doc_id>", methods=["DELETE"])
+def delete_research_document(doc_id):
+    """Delete a research document."""
+    delete_doc('research_documents', doc_id)
+    return jsonify({"success": True})
+
+
+# --- Archive Logs ---
+@app.route("/api/episodes/<episode_id>/archive-logs", methods=["GET"])
+def get_episode_archive_logs(episode_id):
+    """Get all archive logs for an episode."""
+    try:
+        logs = get_docs_by_episode('archive_logs', episode_id)
+        return jsonify(logs)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/archive-logs", methods=["POST"])
+def create_archive_log():
+    """Create a new archive log entry."""
+    try:
+        data = request.get_json()
+        if not data.get('episodeId'):
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Archive log structure matching Quickture export
+        data['source'] = data.get('source', 'manual')  # quickture, nasa_api, getty, manual
+        data['clipCount'] = data.get('clipCount', 0)
+
+        log = create_doc('archive_logs', data)
+        return jsonify(log), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/archive-logs/import-csv", methods=["POST"])
+def import_archive_csv():
+    """Import archive log from Quickture CSV export."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        csv_content = data.get('csvContent')
+        source = data.get('source', 'quickture')
+
+        if not episode_id or not csv_content:
+            return jsonify({"error": "episodeId and csvContent are required"}), 400
+
+        # Parse CSV content (expecting: Filename, Timecode_In, Timecode_Out, Description, Keywords, Technical_Notes, Getty_ID)
+        import csv
+        import io
+
+        reader = csv.DictReader(io.StringIO(csv_content))
+        clips = []
+        for row in reader:
+            clips.append({
+                'filename': row.get('Filename', ''),
+                'timecodeIn': row.get('Timecode_In', ''),
+                'timecodeOut': row.get('Timecode_Out', ''),
+                'description': row.get('Description', ''),
+                'keywords': row.get('Keywords', '').split(',') if row.get('Keywords') else [],
+                'technicalNotes': row.get('Technical_Notes', ''),
+                'gettyId': row.get('Getty_ID', ''),
+                'nasaId': row.get('NASA_ID', ''),
+            })
+
+        # Create archive log entry
+        log_data = {
+            'episodeId': episode_id,
+            'source': source,
+            'clips': clips,
+            'clipCount': len(clips),
+            'importedAt': datetime.utcnow().isoformat()
+        }
+
+        log = create_doc('archive_logs', log_data)
+        return jsonify(log), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/archive-logs/<log_id>", methods=["DELETE"])
+def delete_archive_log(log_id):
+    """Delete an archive log."""
+    delete_doc('archive_logs', log_id)
+    return jsonify({"success": True})
+
+
+# --- Interview Transcripts ---
+@app.route("/api/episodes/<episode_id>/transcripts", methods=["GET"])
+def get_episode_transcripts(episode_id):
+    """Get all interview transcripts for an episode."""
+    try:
+        transcripts = get_docs_by_episode('interview_transcripts', episode_id)
+        return jsonify(transcripts)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/transcripts", methods=["POST"])
+def create_transcript():
+    """Create a new interview transcript."""
+    try:
+        data = request.get_json()
+        if not data.get('episodeId'):
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Transcript structure
+        data['speakerIdentified'] = data.get('speakerIdentified', False)
+        data['timecodesAligned'] = data.get('timecodesAligned', False)
+        data['segments'] = data.get('segments', [])  # [{timecode, speaker, text, metadata}]
+
+        transcript = create_doc('interview_transcripts', data)
+        return jsonify(transcript), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/transcripts/<transcript_id>", methods=["PUT"])
+def update_transcript(transcript_id):
+    """Update an interview transcript."""
+    try:
+        data = request.get_json()
+        transcript = update_doc('interview_transcripts', transcript_id, data)
+        return jsonify(transcript)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/transcripts/<transcript_id>", methods=["DELETE"])
+def delete_transcript(transcript_id):
+    """Delete an interview transcript."""
+    delete_doc('interview_transcripts', transcript_id)
+    return jsonify({"success": True})
+
+
+# --- Script Versions ---
+@app.route("/api/episodes/<episode_id>/script-versions", methods=["GET"])
+def get_episode_script_versions(episode_id):
+    """Get all script versions for an episode."""
+    try:
+        versions = get_docs_by_episode('script_versions', episode_id)
+        # Sort by version number
+        versions.sort(key=lambda x: x.get('versionNumber', 0))
+        return jsonify(versions)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/script-versions", methods=["POST"])
+def create_script_version():
+    """Create a new script version."""
+    try:
+        data = request.get_json()
+        if not data.get('episodeId'):
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Get current version count to auto-increment
+        existing = get_docs_by_episode('script_versions', data['episodeId'])
+        data['versionNumber'] = len(existing) + 1
+        data['versionType'] = data.get('versionType', SCRIPT_VERSION_TYPES[min(len(existing), 3)])
+        data['isLocked'] = data.get('isLocked', False)
+        data['segments'] = data.get('segments', [])  # [{segmentNumber, title, voiceover, archiveRefs, interviewRefs, genAiVisuals}]
+
+        version = create_doc('script_versions', data)
+
+        # Update episode's script workspace
+        episode = get_doc('episodes', data['episodeId'])
+        if episode:
+            script_workspace = episode.get('scriptWorkspace', {})
+            script_workspace['currentVersion'] = version['id']
+            if 'versionHistory' not in script_workspace:
+                script_workspace['versionHistory'] = []
+            script_workspace['versionHistory'].append({
+                'versionId': version['id'],
+                'versionNumber': data['versionNumber'],
+                'versionType': data['versionType'],
+                'createdAt': version['createdAt']
+            })
+            update_doc('episodes', data['episodeId'], {'scriptWorkspace': script_workspace})
+
+        return jsonify(version), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/script-versions/<version_id>", methods=["PUT"])
+def update_script_version(version_id):
+    """Update a script version."""
+    try:
+        data = request.get_json()
+        version = update_doc('script_versions', version_id, data)
+        return jsonify(version)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/script-versions/<version_id>/lock", methods=["POST"])
+def lock_script_version(version_id):
+    """Lock a script version (V4 final)."""
+    try:
+        version = update_doc('script_versions', version_id, {
+            'isLocked': True,
+            'lockedAt': datetime.utcnow().isoformat(),
+            'versionType': 'V4_locked'
+        })
+        return jsonify(version)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Compliance Items ---
+@app.route("/api/episodes/<episode_id>/compliance", methods=["GET"])
+def get_episode_compliance(episode_id):
+    """Get all compliance items for an episode."""
+    try:
+        items = get_docs_by_episode('compliance_items', episode_id)
+        return jsonify(items)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/compliance", methods=["POST"])
+def create_compliance_item():
+    """Create a new compliance item."""
+    try:
+        data = request.get_json()
+        if not data.get('episodeId'):
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Compliance item types: source_citation, archive_license, exif_metadata, legal_signoff
+        data['itemType'] = data.get('itemType', 'source_citation')
+        data['status'] = data.get('status', 'pending')  # pending, verified, flagged
+
+        item = create_doc('compliance_items', data)
+        return jsonify(item), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/compliance/<item_id>", methods=["PUT"])
+def update_compliance_item(item_id):
+    """Update a compliance item."""
+    try:
+        data = request.get_json()
+        item = update_doc('compliance_items', item_id, data)
+        return jsonify(item)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/compliance/export", methods=["GET"])
+def export_compliance_package(episode_id):
+    """Export compliance package for an episode."""
+    try:
+        items = get_docs_by_episode('compliance_items', episode_id)
+        episode = get_doc('episodes', episode_id)
+
+        # Group by type
+        package = {
+            'episodeId': episode_id,
+            'episodeTitle': episode.get('title', 'Unknown') if episode else 'Unknown',
+            'exportedAt': datetime.utcnow().isoformat(),
+            'sourceCitations': [i for i in items if i.get('itemType') == 'source_citation'],
+            'archiveLicenses': [i for i in items if i.get('itemType') == 'archive_license'],
+            'exifMetadata': [i for i in items if i.get('itemType') == 'exif_metadata'],
+            'legalSignoffs': [i for i in items if i.get('itemType') == 'legal_signoff'],
+            'summary': {
+                'totalItems': len(items),
+                'verified': sum(1 for i in items if i.get('status') == 'verified'),
+                'pending': sum(1 for i in items if i.get('status') == 'pending'),
+                'flagged': sum(1 for i in items if i.get('status') == 'flagged')
+            }
+        }
+
+        return jsonify(package)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Agent Tasks ---
+@app.route("/api/episodes/<episode_id>/agent-tasks", methods=["GET"])
+def get_episode_agent_tasks(episode_id):
+    """Get all agent tasks for an episode."""
+    try:
+        tasks = get_docs_by_episode('agent_tasks', episode_id)
+        return jsonify(tasks)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/agent-tasks", methods=["POST"])
+def create_agent_task_route():
+    """Create a new agent task."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        agent_type = data.get('agentType')
+        task_type = data.get('taskType')
+        input_data = data.get('inputData', {})
+
+        if not episode_id or not agent_type:
+            return jsonify({"error": "episodeId and agentType are required"}), 400
+
+        if agent_type not in AGENT_TYPES:
+            return jsonify({"error": f"Invalid agent type. Must be one of: {list(AGENT_TYPES.keys())}"}), 400
+
+        task = create_agent_task(episode_id, agent_type, task_type, input_data)
+        return jsonify(task), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/agent-tasks/<task_id>", methods=["PUT"])
+def update_agent_task_route(task_id):
+    """Update an agent task."""
+    try:
+        data = request.get_json()
+        status = data.get('status')
+        output_data = data.get('outputData')
+        error = data.get('error')
+
+        task = update_agent_task(task_id, status, output_data, error)
+        return jsonify(task)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- AI Agent Swarm for Script Generation ---
+@app.route("/api/ai/script-swarm", methods=["POST"])
+def ai_script_swarm():
+    """Execute script generation using multi-agent swarm architecture."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        segment_number = data.get('segmentNumber')  # Optional: generate specific segment only
+
+        if not episode_id:
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Get episode data
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            return jsonify({"error": "Episode not found"}), 404
+
+        # Get research documents
+        research_docs = get_docs_by_episode('research_documents', episode_id)
+
+        # Get archive logs
+        archive_logs = get_docs_by_episode('archive_logs', episode_id)
+
+        # Get interview transcripts
+        transcripts = get_docs_by_episode('interview_transcripts', episode_id)
+
+        # Get series bible if available
+        series_id = episode.get('seriesId')
+        series = get_doc('series', series_id) if series_id else None
+
+        # Build context for agents
+        research_context = "\n\n".join([
+            f"**{doc.get('title', 'Untitled')}**\n{doc.get('content', '')}"
+            for doc in research_docs
+        ])
+
+        archive_context = "\n".join([
+            f"- {clip.get('description', '')} [{clip.get('filename', '')}] TC: {clip.get('timecodeIn', '')}-{clip.get('timecodeOut', '')}"
+            for log in archive_logs
+            for clip in log.get('clips', [])
+        ])
+
+        interview_context = "\n\n".join([
+            f"**{t.get('speakerName', 'Unknown Speaker')}**\n" +
+            "\n".join([f"[{s.get('timecode', '')}] {s.get('text', '')}" for s in t.get('segments', [])])
+            for t in transcripts
+        ])
+
+        series_bible = series.get('seriesBible', '') if series else ''
+        episode_brief = episode.get('brief', {})
+
+        # Create agent tasks
+        tasks_created = []
+
+        # Agent 1: Research Specialist - Analyze research and suggest structure
+        research_task = create_agent_task(episode_id, 'research_specialist', 'analyze_research', {
+            'episodeBrief': episode_brief,
+            'researchContext': research_context[:10000]  # Limit context size
+        })
+        tasks_created.append(research_task)
+
+        # Agent 2: Archive Specialist - Match archive to story beats
+        archive_task = create_agent_task(episode_id, 'archive_specialist', 'match_archive', {
+            'episodeBrief': episode_brief,
+            'archiveContext': archive_context[:10000]
+        })
+        tasks_created.append(archive_task)
+
+        # Agent 3: Interview Producer - Extract soundbites
+        interview_task = create_agent_task(episode_id, 'interview_producer', 'extract_soundbites', {
+            'episodeBrief': episode_brief,
+            'interviewContext': interview_context[:10000]
+        })
+        tasks_created.append(interview_task)
+
+        # Execute agents (in production, this would be async)
+        # For now, execute synchronously
+        results = {}
+
+        for task in tasks_created:
+            agent_type = task['agentType']
+            agent_info = AGENT_TYPES[agent_type]
+            input_data = task['inputData']
+
+            # Build agent-specific prompt
+            system_prompt = f"""You are the {agent_info['name']}, specialized in {agent_info['role']}.
+
+Your responsibilities:
+{chr(10).join(f'- {r}' for r in agent_info['responsibilities'])}
+
+Series Guidelines: {series_bible[:2000] if series_bible else 'No series bible available'}
+
+Episode Brief:
+- Summary: {episode_brief.get('summary', 'Not provided')}
+- Story Beats: {', '.join(episode_brief.get('storyBeats', []))}
+- Unique Angle: {episode_brief.get('uniqueAngle', 'Not specified')}"""
+
+            if agent_type == 'research_specialist':
+                prompt = f"""Analyze the following research and provide:
+1. A verified timeline of key events
+2. Technical concepts that need explanation
+3. Claims that require interview corroboration
+4. Suggested 5-7 segment narrative structure
+
+Research Documents:
+{input_data.get('researchContext', 'No research available')}"""
+
+            elif agent_type == 'archive_specialist':
+                prompt = f"""Review the available archive footage and provide:
+1. Key visual sequences that support the story
+2. Footage gaps that need B-roll or Gen AI visuals
+3. Suggested archive clips for each story beat
+4. Pacing recommendations based on available material
+
+Archive Log:
+{input_data.get('archiveContext', 'No archive available')}"""
+
+            elif agent_type == 'interview_producer':
+                prompt = f"""Analyze the interview transcripts and provide:
+1. Top 10 soundbites ranked by emotional impact
+2. Soundbites matched to potential story segments
+3. Gaps where additional interviews are needed
+4. Suggestions for follow-up questions
+
+Interview Transcripts:
+{input_data.get('interviewContext', 'No interviews available')}"""
+
+            # Execute AI call
+            update_agent_task(task['id'], 'in_progress')
+            try:
+                response = generate_ai_response(prompt, system_prompt)
+                results[agent_type] = response
+                update_agent_task(task['id'], 'completed', {'analysis': response})
+            except Exception as e:
+                update_agent_task(task['id'], 'failed', error=str(e))
+                results[agent_type] = f"Error: {str(e)}"
+
+        # Agent 4: Script Writer - Synthesize all inputs into script
+        script_writer_prompt = f"""Based on the analysis from the specialist agents, create a documentary script.
+
+RESEARCH SPECIALIST ANALYSIS:
+{results.get('research_specialist', 'Not available')}
+
+ARCHIVE SPECIALIST RECOMMENDATIONS:
+{results.get('archive_specialist', 'Not available')}
+
+INTERVIEW PRODUCER SOUNDBITES:
+{results.get('interview_producer', 'Not available')}
+
+Create a script with 5-7 segments. For each segment include:
+1. SEGMENT TITLE
+2. [VOICEOVER] - Narration text
+3. [ARCHIVE: description/reference] - Visual callouts
+4. [INTERVIEW: speaker - timecode or quote] - Interview bites
+5. [GEN AI VISUAL: description] - If needed for missing footage
+
+Write in broadcast documentary style. Target 45 minutes total."""
+
+        script_task = create_agent_task(episode_id, 'script_writer', 'generate_script', {
+            'agentInputs': results
+        })
+        update_agent_task(script_task['id'], 'in_progress')
+
+        try:
+            script_response = generate_ai_response(script_writer_prompt,
+                f"You are the Script Writer agent. Build voiceover narrative with story arc (setup, complication, resolution). Write to broadcast documentary standards. {series_bible[:1000] if series_bible else ''}")
+            update_agent_task(script_task['id'], 'completed', {'script': script_response})
+
+            # Agent 5: Fact Checker - Verify claims
+            fact_check_prompt = f"""Review this script and verify all factual claims:
+
+{script_response}
+
+For each major claim, provide:
+1. The claim text
+2. Source verification (from research documents)
+3. Confidence level (verified/probable/requires_confirmation)
+4. Any legal concerns to flag"""
+
+            fact_task = create_agent_task(episode_id, 'fact_checker', 'verify_script', {
+                'script': script_response
+            })
+            update_agent_task(fact_task['id'], 'in_progress')
+
+            fact_response = generate_ai_response(fact_check_prompt,
+                "You are the Fact Checker agent. Cross-reference every major claim. Flag statements requiring legal review. Generate source citation log.")
+            update_agent_task(fact_task['id'], 'completed', {'verification': fact_response})
+
+            # Create script version
+            script_version = create_doc('script_versions', {
+                'episodeId': episode_id,
+                'versionNumber': 1,
+                'versionType': 'V1_initial',
+                'content': script_response,
+                'factCheck': fact_response,
+                'agentOutputs': {
+                    'research_specialist': results.get('research_specialist'),
+                    'archive_specialist': results.get('archive_specialist'),
+                    'interview_producer': results.get('interview_producer'),
+                    'script_writer': script_response,
+                    'fact_checker': fact_response
+                },
+                'isLocked': False
+            })
+
+            return jsonify({
+                'success': True,
+                'scriptVersionId': script_version['id'],
+                'script': script_response,
+                'factCheck': fact_response,
+                'agentOutputs': results
+            })
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/research-agent", methods=["POST"])
+def ai_research_agent():
+    """Execute deep research for an episode."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        episode_brief = data.get('brief', {})
+
+        if not episode_id:
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Create research agent task
+        task = create_agent_task(episode_id, 'research_specialist', 'deep_research', {
+            'brief': episode_brief
+        })
+
+        # Build research prompt
+        prompt = f"""Based on this episode brief, generate a comprehensive research package:
+
+Episode Summary: {episode_brief.get('summary', 'Not provided')}
+Story Beats: {', '.join(episode_brief.get('storyBeats', []))}
+Target Interviewees: {', '.join(episode_brief.get('targetInterviewees', []))}
+Archive Requirements: {', '.join(episode_brief.get('archiveRequirements', []))}
+Unique Angle: {episode_brief.get('uniqueAngle', 'Not specified')}
+
+Generate:
+1. 10-15 specific research questions to investigate
+2. Timeline of key events requiring verification
+3. Technical concepts requiring explanation
+4. Potential interview subjects with their expertise areas
+5. Archive footage categories needed
+6. List of sources to consult (academic papers, documentaries, books, official records)
+
+Format each section clearly with headers."""
+
+        system_prompt = """You are a documentary research specialist. Generate thorough, factually-grounded research questions and identify key sources.
+Focus on verifiable facts and primary sources. Identify potential contradictions or controversies that need investigation."""
+
+        update_agent_task(task['id'], 'in_progress')
+
+        try:
+            response = generate_ai_response(prompt, system_prompt)
+
+            # Create research document from output
+            research_doc = create_doc('research_documents', {
+                'episodeId': episode_id,
+                'title': 'AI Research Package',
+                'content': response,
+                'documentType': 'agent_output',
+                'confidenceLevel': 'requires_confirmation',
+                'agentTaskId': task['id']
+            })
+
+            update_agent_task(task['id'], 'completed', {
+                'researchPackage': response,
+                'documentId': research_doc['id']
+            })
+
+            return jsonify({
+                'success': True,
+                'taskId': task['id'],
+                'documentId': research_doc['id'],
+                'researchPackage': response
+            })
+
+        except Exception as e:
+            update_agent_task(task['id'], 'failed', error=str(e))
+            return jsonify({"error": str(e)}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Series-Level Knowledge Base ---
+@app.route("/api/series/<series_id>/knowledge-base", methods=["GET"])
+def get_series_knowledge_base(series_id):
+    """Get series-level knowledge base documents."""
+    try:
+        series = get_doc('series', series_id)
+        if not series:
+            return jsonify({"error": "Series not found"}), 404
+
+        knowledge_base = series.get('knowledgeBase', {
+            'seriesBible': None,
+            'brandGuidelines': None,
+            'editorialTone': None,
+            'archiveCredentials': [],
+            'complianceChecklist': None,
+            'researchDocuments': []
+        })
+
+        return jsonify(knowledge_base)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/series/<series_id>/knowledge-base", methods=["PUT"])
+def update_series_knowledge_base(series_id):
+    """Update series-level knowledge base."""
+    try:
+        data = request.get_json()
+        series = get_doc('series', series_id)
+        if not series:
+            return jsonify({"error": "Series not found"}), 404
+
+        knowledge_base = series.get('knowledgeBase', {})
+        knowledge_base.update(data)
+
+        updated = update_doc('series', series_id, {'knowledgeBase': knowledge_base})
+        return jsonify(updated)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Bulk Operations ---
+@app.route("/api/series/<series_id>/episodes/bulk-create", methods=["POST"])
+def bulk_create_episodes(series_id):
+    """Bulk create episodes for a series."""
+    try:
+        data = request.get_json()
+        episodes_data = data.get('episodes', [])
+        project_id = data.get('projectId')
+
+        if not episodes_data:
+            return jsonify({"error": "episodes array is required"}), 400
+
+        created = []
+        for ep_data in episodes_data:
+            ep_data['seriesId'] = series_id
+            ep_data['projectId'] = project_id
+            episode = create_episode_with_buckets(ep_data)
+            created.append(episode)
+
+        return jsonify({
+            'success': True,
+            'created': len(created),
+            'episodes': created
+        }), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
