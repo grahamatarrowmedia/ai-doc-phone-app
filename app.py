@@ -2849,9 +2849,9 @@ def create_episode_factory():
 
 
 # --- Research Documents (Research Bucket) ---
-@app.route("/api/episodes/<episode_id>/research-documents", methods=["GET"])
-def get_episode_research_documents(episode_id):
-    """Get all research documents for an episode."""
+@app.route("/api/episodes/<episode_id>/research-bucket", methods=["GET"])
+def get_episode_research_bucket(episode_id):
+    """Get all research documents from the research bucket for an episode."""
     try:
         docs = get_docs_by_episode('research_documents', episode_id)
         return jsonify(docs)
