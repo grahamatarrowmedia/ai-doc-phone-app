@@ -12,7 +12,7 @@ import time
 import sys
 
 BASE_URL = "https://doc-production-app-280939464794.us-central1.run.app"
-VIDEO_FILE = "/Data/Clients/ArrowMedia/WhatsApp Video 2026-01-23 at 12.12.08.mp4"
+VIDEO_FILE = "/Data/Clients/ArrowMedia/WhatsApp Video 2026-02-02 at 15.31.34.mp4"
 
 
 def print_header(text):

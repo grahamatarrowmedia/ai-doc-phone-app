@@ -1,6 +1,5 @@
 """
 Documentary Production App - Flask backend with Firestore and Vertex AI
-Includes source document auto-download for AI research
 """
 import os
 import re
@@ -28,6 +27,10 @@ STORAGE_BUCKET = os.environ.get("STORAGE_BUCKET", f"{PROJECT_ID}-doc-assets")
 MAX_URLS_PER_QUERY = 10
 DOWNLOAD_TIMEOUT = 30
 
+# App version and environment
+APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
+APP_ENV = os.environ.get("APP_ENV", "prod")
+
 # Initialize Vertex AI
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 model = GenerativeModel(MODEL_NAME)
@@ -38,16 +41,20 @@ db = firestore.Client()
 # Initialize Cloud Storage
 storage_client = storage.Client()
 
-# Collection names
+# Collection prefix based on environment (dev uses separate collections)
+COLLECTION_PREFIX = "dev_" if APP_ENV == "dev" else ""
+
+# Collection names (prefixed by environment)
 COLLECTIONS = {
-    'projects': 'doc_projects',
-    'episodes': 'doc_episodes',
-    'research': 'doc_research',
-    'interviews': 'doc_interviews',
-    'shots': 'doc_shots',
-    'assets': 'doc_assets',
-    'scripts': 'doc_scripts',
-    'feedback': 'doc_feedback'
+    'projects': f'{COLLECTION_PREFIX}doc_projects',
+    'episodes': f'{COLLECTION_PREFIX}doc_episodes',
+    'series': f'{COLLECTION_PREFIX}doc_series',
+    'research': f'{COLLECTION_PREFIX}doc_research',
+    'interviews': f'{COLLECTION_PREFIX}doc_interviews',
+    'shots': f'{COLLECTION_PREFIX}doc_shots',
+    'assets': f'{COLLECTION_PREFIX}doc_assets',
+    'scripts': f'{COLLECTION_PREFIX}doc_scripts',
+    'feedback': f'{COLLECTION_PREFIX}doc_feedback'
 }
 
 
@@ -114,70 +121,11 @@ def generate_ai_response(prompt, system_prompt=""):
 
 
 def generate_grounded_research(prompt, system_prompt=""):
-    """Generate AI response with Google Search grounding for verified research."""
-    try:
-        # Create a model with Google Search grounding
-        grounded_model = GenerativeModel(
-            MODEL_NAME,
-            tools=[Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())]
-        )
-
-        full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-        response = grounded_model.generate_content(full_prompt)
-
-        # Extract grounding metadata (sources used by Google Search)
-        grounding_metadata = []
-        try:
-            if hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                # Try multiple paths for grounding metadata
-                gm = getattr(candidate, 'grounding_metadata', None)
-                if gm:
-                    # Check for grounding_chunks (web sources)
-                    chunks = getattr(gm, 'grounding_chunks', None) or getattr(gm, 'web_search_queries', None)
-                    if chunks:
-                        for chunk in chunks:
-                            web = getattr(chunk, 'web', None)
-                            if web:
-                                uri = getattr(web, 'uri', '') or getattr(web, 'url', '')
-                                title = getattr(web, 'title', '')
-                                if uri:
-                                    grounding_metadata.append({'uri': uri, 'title': title})
-
-                    # Also check grounding_supports for citations
-                    supports = getattr(gm, 'grounding_supports', None)
-                    if supports:
-                        for support in supports:
-                            chunks = getattr(support, 'grounding_chunk_indices', [])
-                            # Get the segment info if available
-                            segment = getattr(support, 'segment', None)
-
-                    # Check search_entry_point for search suggestions
-                    search_entry = getattr(gm, 'search_entry_point', None)
-                    if search_entry:
-                        rendered = getattr(search_entry, 'rendered_content', '')
-                        # Extract URLs from rendered content if present
-                        import re
-                        urls_in_rendered = re.findall(r'href="([^"]+)"', rendered)
-                        for url in urls_in_rendered[:5]:
-                            if url.startswith('http') and url not in [g['uri'] for g in grounding_metadata]:
-                                grounding_metadata.append({'uri': url, 'title': ''})
-
-                print(f"Grounding metadata found: {len(grounding_metadata)} sources")
-        except Exception as gm_error:
-            print(f"Error extracting grounding metadata: {gm_error}")
-
-        return {
-            'text': response.text,
-            'sources': grounding_metadata
-        }
-    except Exception as e:
-        print(f"Grounded research error: {e}")
-        # Fallback to regular generation
-        return {
-            'text': generate_ai_response(prompt, system_prompt),
-            'sources': []
-        }
+    """Placeholder - AI research functionality disabled in this build."""
+    return {
+        'text': 'AI Research functionality is not available in this build.',
+        'sources': []
+    }
 
 
 # ============== Source Document Functions ==============
@@ -387,7 +335,7 @@ def ensure_bucket_exists(bucket_name):
 @app.route("/")
 def index():
     """Render the main app interface."""
-    return render_template("index.html")
+    return render_template("index.html", app_version=APP_VERSION, app_env=APP_ENV)
 
 
 @app.route("/health")
@@ -434,7 +382,7 @@ def update_project(project_id):
 def delete_project(project_id):
     """Delete a project and all related data."""
     # Delete all related data first
-    for collection in ['episodes', 'research', 'interviews', 'shots', 'assets', 'scripts']:
+    for collection in ['episodes', 'series', 'research', 'interviews', 'shots', 'assets', 'scripts']:
         docs = db.collection(COLLECTIONS[collection]).where('projectId', '==', project_id).stream()
         for doc in docs:
             doc.reference.delete()
@@ -473,6 +421,45 @@ def update_episode(episode_id):
 def delete_episode(episode_id):
     """Delete an episode."""
     delete_doc('episodes', episode_id)
+    return jsonify({"success": True})
+
+
+# ============== Series Routes ==============
+
+@app.route("/api/projects/<project_id>/series", methods=["GET"])
+def get_series(project_id):
+    """Get all series for a project."""
+    series = get_all_docs('series', project_id)
+    # Sort by order field
+    series.sort(key=lambda s: s.get('order', 0))
+    return jsonify(series)
+
+
+@app.route("/api/series", methods=["POST"])
+def create_series():
+    """Create a new series."""
+    data = request.get_json()
+    series = create_doc('series', data)
+    return jsonify(series), 201
+
+
+@app.route("/api/series/<series_id>", methods=["PUT"])
+def update_series(series_id):
+    """Update a series."""
+    data = request.get_json()
+    series = update_doc('series', series_id, data)
+    return jsonify(series)
+
+
+@app.route("/api/series/<series_id>", methods=["DELETE"])
+def delete_series(series_id):
+    """Delete a series and ungroup its episodes."""
+    # Remove seriesId from all episodes in this series
+    episodes = db.collection(COLLECTIONS['episodes']).where('seriesId', '==', series_id).stream()
+    for ep in episodes:
+        ep.reference.update({'seriesId': None, 'updatedAt': datetime.utcnow().isoformat()})
+
+    delete_doc('series', series_id)
     return jsonify({"success": True})
 
 
@@ -613,6 +600,445 @@ def delete_asset(asset_id):
 
     delete_doc('assets', asset_id)
     return jsonify({"success": True})
+
+
+@app.route("/api/assets/upload", methods=["POST"])
+def upload_asset_file():
+    """Upload a file for an asset and create/update the asset record."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Get form data
+    project_id = request.form.get('projectId')
+    asset_id = request.form.get('assetId')  # Optional - for updating existing asset
+    episode_id = request.form.get('episodeId')  # Optional - for episode research documents
+    series_id = request.form.get('seriesId')  # Optional - for series research documents
+    is_research_document = request.form.get('isResearchDocument', 'false').lower() == 'true'
+    title = request.form.get('title', file.filename)
+    asset_type = request.form.get('type', 'Document')
+    status = request.form.get('status', 'Acquired')
+    notes = request.form.get('notes', '')
+
+    if not project_id:
+        return jsonify({"error": "Project ID is required"}), 400
+
+    try:
+        # Read file content
+        file_content = file.read()
+        file_size = len(file_content)
+
+        # Determine content type
+        content_type = file.content_type or 'application/octet-stream'
+
+        # Generate safe filename
+        original_filename = file.filename
+        safe_filename = re.sub(r'[^\w\-.]', '_', original_filename)
+
+        # Generate unique path
+        file_hash = hashlib.md5(file_content).hexdigest()[:8]
+        blob_path = f"assets/{project_id}/{file_hash}_{safe_filename}"
+
+        # Upload to GCS
+        ensure_bucket_exists(STORAGE_BUCKET)
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(blob_path)
+        blob.upload_from_string(file_content, content_type=content_type)
+
+        print(f"Uploaded asset file: {blob_path} ({file_size} bytes)")
+
+        # Create or update asset document
+        asset_data = {
+            "projectId": project_id,
+            "title": title,
+            "type": asset_type,
+            "status": status,
+            "notes": notes,
+            "gcsPath": blob_path,
+            "filename": original_filename,
+            "mimeType": content_type,
+            "sizeBytes": file_size,
+            "hasFile": True,
+            "isResearchDocument": is_research_document,
+            "updatedAt": datetime.utcnow().isoformat()
+        }
+
+        # Add optional entity associations for research documents
+        if episode_id:
+            asset_data["episodeId"] = episode_id
+        if series_id:
+            asset_data["seriesId"] = series_id
+
+        if asset_id:
+            # Update existing asset
+            # First delete old file if exists
+            existing = get_doc('assets', asset_id)
+            if existing and existing.get('gcsPath') and existing['gcsPath'] != blob_path:
+                try:
+                    old_blob = bucket.blob(existing['gcsPath'])
+                    if old_blob.exists():
+                        old_blob.delete()
+                except:
+                    pass
+
+            asset = update_doc('assets', asset_id, asset_data)
+        else:
+            # Create new asset
+            asset_data['createdAt'] = datetime.utcnow().isoformat()
+            asset = create_doc('assets', asset_data)
+
+        return jsonify({
+            "success": True,
+            "asset": asset,
+            "gcsPath": blob_path,
+            "filename": original_filename,
+            "size": file_size
+        }), 201
+
+    except Exception as e:
+        print(f"Error uploading asset file: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/assets/<asset_id>/file", methods=["GET"])
+def get_asset_file(asset_id):
+    """Download an asset's file using streaming for all sizes."""
+    from flask import stream_with_context
+    import sys
+
+    print(f"Download request for asset: {asset_id}", file=sys.stderr)
+
+    asset = get_doc('assets', asset_id)
+    if not asset:
+        print(f"Asset not found: {asset_id}", file=sys.stderr)
+        return jsonify({"error": "Asset not found"}), 404
+
+    if not asset.get('gcsPath'):
+        print(f"Asset has no gcsPath: {asset_id}", file=sys.stderr)
+        return jsonify({"error": "Asset has no file"}), 404
+
+    gcs_path = asset.get('gcsPath')
+    print(f"Attempting to access GCS path: {gcs_path}", file=sys.stderr)
+
+    try:
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(gcs_path)
+
+        print(f"Checking if blob exists...", file=sys.stderr)
+        if not blob.exists():
+            print(f"Blob does not exist: {gcs_path}", file=sys.stderr)
+            return jsonify({"error": "File not found in storage"}), 404
+
+        content_type = asset.get('mimeType', 'application/octet-stream')
+        filename = asset.get('filename', 'download')
+
+        # Get file size
+        print(f"Reloading blob metadata...", file=sys.stderr)
+        blob.reload()
+        file_size = blob.size
+
+        print(f"Streaming asset file: {gcs_path} ({file_size} bytes)", file=sys.stderr)
+
+        # Stream using GCS range requests - this works within Cloud Run's response limits
+        # Each chunk is fetched separately, avoiding memory issues
+        chunk_size = 5 * 1024 * 1024  # 5MB chunks for faster streaming
+
+        def generate():
+            """Generator that yields file chunks using range requests."""
+            offset = 0
+            chunk_num = 0
+            while offset < file_size:
+                end = min(offset + chunk_size, file_size)
+                try:
+                    # GCS range requests are inclusive on both ends
+                    chunk = blob.download_as_bytes(start=offset, end=end - 1)
+                    chunk_num += 1
+                    if chunk_num % 10 == 0:  # Log every 10 chunks
+                        print(f"Chunk {chunk_num}: {offset}-{end} of {file_size} ({100*end/file_size:.1f}%)")
+                    yield chunk
+                    offset = end
+                except Exception as e:
+                    print(f"Error downloading chunk at offset {offset}: {e}")
+                    raise
+
+            print(f"Stream complete: {chunk_num} chunks, {file_size} bytes total")
+
+        # Use chunked transfer encoding for streaming (no Content-Length)
+        # This allows Cloud Run to stream without buffering the entire response
+        response = Response(
+            stream_with_context(generate()),
+            mimetype=content_type,
+        )
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response.headers['X-Content-Length'] = str(file_size)  # Hint for client progress
+        return response
+
+    except Exception as e:
+        print(f"Error downloading asset file: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# Chunked upload for large asset files (>32MB)
+CHUNK_SIZE = 10 * 1024 * 1024  # 10MB chunks
+
+
+@app.route("/api/assets/upload/init", methods=["POST"])
+def init_asset_chunked_upload():
+    """Initialize a chunked upload session for large asset files."""
+    data = request.get_json()
+    filename = data.get('filename', 'upload')
+    content_type = data.get('contentType', 'application/octet-stream')
+    file_size = data.get('fileSize', 0)
+    total_chunks = data.get('totalChunks', 1)
+    project_id = data.get('projectId')
+    title = data.get('title', filename)
+    asset_type = data.get('type', 'Document')
+    status = data.get('status', 'Acquired')
+    notes = data.get('notes', '')
+
+    if not project_id:
+        return jsonify({"error": "Project ID is required"}), 400
+
+    # Generate unique upload ID
+    upload_id = hashlib.md5(f"{filename}{project_id}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:16]
+
+    # Generate safe filename and blob path
+    safe_filename = re.sub(r'[^\w\-.]', '_', filename)
+    blob_path = f"assets/{project_id}/{upload_id}_{safe_filename}"
+
+    print(f"Initialized chunked upload: {upload_id} for {filename} ({file_size} bytes, {total_chunks} chunks)")
+
+    return jsonify({
+        "uploadId": upload_id,
+        "blobPath": blob_path,
+        "totalChunks": total_chunks,
+        "projectId": project_id,
+        "filename": filename,
+        "contentType": content_type,
+        "title": title,
+        "type": asset_type,
+        "status": status,
+        "notes": notes
+    })
+
+
+@app.route("/api/assets/upload/chunk/<upload_id>", methods=["POST"])
+def upload_asset_chunk(upload_id):
+    """Upload a chunk of a large asset file."""
+    chunk_index = int(request.form.get('chunkIndex', 0))
+    total_chunks = int(request.form.get('totalChunks', 1))
+    blob_path = request.form.get('blobPath', '')
+    content_type = request.form.get('contentType', 'application/octet-stream')
+
+    if 'chunk' not in request.files:
+        return jsonify({"error": "No chunk data"}), 400
+
+    chunk = request.files['chunk']
+    chunk_data = chunk.read()
+
+    try:
+        ensure_bucket_exists(STORAGE_BUCKET)
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+
+        # Store chunk temporarily
+        chunk_blob_name = f"uploads/chunks/{upload_id}/chunk_{chunk_index:04d}"
+        chunk_blob = bucket.blob(chunk_blob_name)
+        chunk_blob.upload_from_string(chunk_data, content_type='application/octet-stream')
+
+        print(f"Uploaded chunk {chunk_index + 1}/{total_chunks} for {upload_id} ({len(chunk_data)} bytes)")
+
+        return jsonify({
+            "status": "uploaded",
+            "chunkIndex": chunk_index,
+            "totalChunks": total_chunks,
+            "bytesUploaded": len(chunk_data)
+        })
+
+    except Exception as e:
+        print(f"Chunk upload error: {e}")
+        return jsonify({"error": f"Chunk upload failed: {str(e)}"}), 500
+
+
+@app.route("/api/assets/upload/complete/<upload_id>", methods=["POST"])
+def complete_asset_chunked_upload(upload_id):
+    """Complete a chunked upload by combining chunks and creating the asset."""
+    data = request.get_json()
+    blob_path = data.get('blobPath', '')
+    content_type = data.get('contentType', 'application/octet-stream')
+    project_id = data.get('projectId')
+    filename = data.get('filename', 'upload')
+    title = data.get('title', filename)
+    asset_type = data.get('type', 'Document')
+    status = data.get('status', 'Acquired')
+    notes = data.get('notes', '')
+    asset_id = data.get('assetId')  # Optional - for updating existing asset
+
+    if not project_id:
+        return jsonify({"error": "Project ID is required"}), 400
+
+    try:
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+
+        # List all chunks
+        chunk_blobs = list(bucket.list_blobs(prefix=f"uploads/chunks/{upload_id}/"))
+        chunk_blobs.sort(key=lambda b: b.name)
+
+        if not chunk_blobs:
+            return jsonify({"error": "No chunks found for this upload"}), 400
+
+        print(f"Combining {len(chunk_blobs)} chunks for {upload_id}")
+
+        # Combine all chunk data
+        combined_data = b''
+        for cb in chunk_blobs:
+            combined_data += cb.download_as_bytes()
+
+        file_size = len(combined_data)
+
+        # Upload combined file to final location
+        final_blob = bucket.blob(blob_path)
+        final_blob.upload_from_string(combined_data, content_type=content_type)
+
+        print(f"Combined file uploaded: {blob_path} ({file_size} bytes)")
+
+        # Clean up chunks
+        for cb in chunk_blobs:
+            cb.delete()
+
+        # Create or update asset document
+        asset_data = {
+            "projectId": project_id,
+            "title": title,
+            "type": asset_type,
+            "status": status,
+            "notes": notes,
+            "gcsPath": blob_path,
+            "filename": filename,
+            "mimeType": content_type,
+            "sizeBytes": file_size,
+            "hasFile": True,
+            "updatedAt": datetime.utcnow().isoformat()
+        }
+
+        if asset_id:
+            # Update existing asset
+            existing = get_doc('assets', asset_id)
+            if existing and existing.get('gcsPath') and existing['gcsPath'] != blob_path:
+                try:
+                    old_blob = bucket.blob(existing['gcsPath'])
+                    if old_blob.exists():
+                        old_blob.delete()
+                except:
+                    pass
+            asset = update_doc('assets', asset_id, asset_data)
+        else:
+            asset_data['createdAt'] = datetime.utcnow().isoformat()
+            asset = create_doc('assets', asset_data)
+
+        return jsonify({
+            "success": True,
+            "asset": asset,
+            "gcsPath": blob_path,
+            "filename": filename,
+            "size": file_size
+        }), 201
+
+    except Exception as e:
+        print(f"Error completing chunked upload: {e}")
+        # Try to clean up chunks on error
+        try:
+            bucket = storage_client.bucket(STORAGE_BUCKET)
+            for cb in bucket.list_blobs(prefix=f"uploads/chunks/{upload_id}/"):
+                cb.delete()
+        except:
+            pass
+        return jsonify({"error": str(e)}), 500
+
+
+# ============== Research Documents Query Routes ==============
+
+@app.route("/api/episodes/<episode_id>/research-documents", methods=["GET"])
+def get_episode_research_documents(episode_id):
+    """Get all research documents for an episode."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'episodeId', '==', episode_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/series/<series_id>/research-documents", methods=["GET"])
+def get_series_research_documents(series_id):
+    """Get all research documents for a series."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'seriesId', '==', series_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/research-documents", methods=["GET"])
+def get_project_research_documents(project_id):
+    """Get all research documents for a project (project-level only, not episode/series)."""
+    try:
+        # Get research documents that are project-level (no episodeId or seriesId)
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            # Filter to only project-level (no episode or series association)
+            if not doc_data.get('episodeId') and not doc_data.get('seriesId'):
+                doc_data['id'] = doc.id
+                documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/projects/<project_id>/all-research-documents", methods=["GET"])
+def get_all_project_research_documents(project_id):
+    """Get all research documents for a project (including episode and series docs)."""
+    try:
+        docs_ref = db.collection(COLLECTIONS['assets']).where(
+            'projectId', '==', project_id
+        ).where(
+            'isResearchDocument', '==', True
+        )
+        documents = []
+        for doc in docs_ref.stream():
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            documents.append(doc_data)
+        return jsonify(documents)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/projects/<project_id>/assets/clear-sources", methods=["DELETE"])
@@ -800,6 +1226,9 @@ def submit_feedback():
     feedback_doc = {
         'text': feedback_text,
         'type': feedback_type,
+        'name': data.get('name', 'Anonymous'),
+        'version': data.get('version', ''),
+        'url': data.get('url', ''),
         'screenshotPath': screenshot_path,
         'projectId': project_id,
         'projectTitle': project_title,
@@ -807,7 +1236,9 @@ def submit_feedback():
         'userAgent': user_agent,
         'screenSize': screen_size,
         'status': 'new',
-        'createdAt': timestamp
+        'response': '',
+        'createdAt': timestamp,
+        'updatedAt': timestamp
     }
 
     # Save to Firestore
@@ -819,9 +1250,10 @@ def submit_feedback():
 
     return jsonify({
         "success": True,
+        "id": doc_ref.id,
         "feedbackId": doc_ref.id,
         "message": "Feedback received"
-    })
+    }), 201
 
 
 @app.route("/api/feedback", methods=["GET"])
@@ -838,6 +1270,27 @@ def get_all_feedback():
         feedback_list.append(fb)
 
     return jsonify(feedback_list)
+
+
+@app.route("/api/feedback/<feedback_id>", methods=["PUT"])
+def update_feedback_status(feedback_id):
+    """Update a feedback entry (status and admin response)."""
+    try:
+        data = request.get_json()
+        update_data = {
+            "updatedAt": datetime.utcnow().isoformat()
+        }
+        if 'status' in data:
+            update_data['status'] = data['status']
+        if 'response' in data:
+            update_data['response'] = data['response']
+
+        doc_ref = db.collection(COLLECTIONS['feedback']).document(feedback_id)
+        doc_ref.update(update_data)
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"[ERROR] Failed to update feedback: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/projects/<project_id>/blueprint-content", methods=["GET"])
@@ -997,82 +1450,308 @@ Generate a comprehensive production script with scene breakdowns, shot lists, na
 
 @app.route("/api/ai/research", methods=["POST"])
 def ai_research():
-    """AI-assisted research with automatic source document download."""
-    data = request.get_json()
-    query = data.get('query', '')
-    project_context = data.get('projectContext', '')
-    project_id = data.get('projectId', 'default')
-    download_sources = data.get('downloadSources', True)
+    """AI research - disabled in this build."""
+    return jsonify({
+        "result": "AI Research functionality is not available in this build.",
+        "sources": [],
+        "disabled": True
+    })
 
-    system_prompt = f"""You are a documentary research assistant specializing in VERIFIED, MULTI-SOURCE research. Your role is to provide thoroughly vetted information for documentary production.
 
-## CRITICAL RESEARCH REQUIREMENTS:
+def get_research_document_contents(episode_id=None, series_id=None, project_id=None):
+    """Fetch and read contents of research documents for context."""
+    documents_context = []
 
-1. **VERIFICATION MANDATE**: Only include information that can be verified from MULTIPLE independent sources. Never rely on a single source.
-
-2. **SOURCE HIERARCHY** (prioritize in this order):
-   - Primary sources (official archives, government records, academic institutions)
-   - Peer-reviewed publications and academic journals
-   - Established news organizations with editorial standards
-   - Official organizational websites
-   - Cross-referenced secondary sources
-
-3. **FOR EACH CLAIM OR FACT, YOU MUST**:
-   - Indicate verification status: ✅ VERIFIED (2+ sources) or ⚠️ SINGLE SOURCE
-   - List the corroborating sources
-   - Note if an archive exists and is accessible
-   - Provide direct URLs where available
-
-4. **DO NOT INCLUDE**:
-   - Unverified claims or rumors
-   - Information from single sources without corroboration
-   - Sources that cannot be independently verified
-   - Wikipedia as a primary source (use it only to find primary sources)
-
-5. **FORMAT REQUIREMENTS**:
-   - Group findings by verification confidence
-   - Clearly mark what has archive footage/documents available
-   - Include contact information for archives where possible
-   - Flag any information that needs further verification
-
-Project context: {project_context}
-
-Remember: For documentary production, ACCURACY IS PARAMOUNT. It's better to provide less information that is verified than more information that is uncertain."""
-
-    result = generate_ai_response(query, system_prompt)
-
-    response_data = {"result": result, "sources": []}
-
-    # Extract URLs and download source documents synchronously
-    if download_sources:
-        urls = extract_urls(result)
-        if urls and project_id:
-            research_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + hashlib.md5(query.encode()).hexdigest()[:8]
-            response_data["researchId"] = research_id
-
-            # Download sources synchronously (limited to 3 to prevent timeout)
-            MAX_SYNC_DOWNLOADS = 3
-            ensure_bucket_exists(STORAGE_BUCKET)
-            downloaded_sources = []
-            for url in urls[:MAX_SYNC_DOWNLOADS]:
-                try:
-                    result_download = download_and_store(url, STORAGE_BUCKET, project_id, research_id)
-                    downloaded_sources.append({
-                        "url": url,
-                        "status": "completed" if result_download.get("status") == "success" else "error",
-                        "title": result_download.get("title", ""),
-                        "filename": result_download.get("filename", "")
+    try:
+        # Get episode research documents
+        if episode_id:
+            docs = db.collection(COLLECTIONS['assets']).where('episodeId', '==', episode_id).where('isResearchDocument', '==', True).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                content = read_document_content(data.get('gcsPath'), data.get('mimeType', ''))
+                if content:
+                    documents_context.append({
+                        'source': f"Episode Document: {data.get('title', data.get('filename', 'Unknown'))}",
+                        'content': content
                     })
-                except Exception as e:
-                    downloaded_sources.append({"url": url, "status": "error", "error": str(e)})
 
-            # Mark remaining URLs as pending
-            for url in urls[MAX_SYNC_DOWNLOADS:]:
-                downloaded_sources.append({"url": url, "status": "pending"})
+        # Get series research documents
+        if series_id:
+            docs = db.collection(COLLECTIONS['assets']).where('seriesId', '==', series_id).where('isResearchDocument', '==', True).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                content = read_document_content(data.get('gcsPath'), data.get('mimeType', ''))
+                if content:
+                    documents_context.append({
+                        'source': f"Series Document: {data.get('title', data.get('filename', 'Unknown'))}",
+                        'content': content
+                    })
 
-            response_data["sources"] = downloaded_sources
+        # Get project-level research documents
+        if project_id:
+            docs = db.collection(COLLECTIONS['assets']).where('projectId', '==', project_id).where('isResearchDocument', '==', True).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                # Only include project-level docs (not linked to episode/series)
+                if not data.get('episodeId') and not data.get('seriesId'):
+                    content = read_document_content(data.get('gcsPath'), data.get('mimeType', ''))
+                    if content:
+                        documents_context.append({
+                            'source': f"Project Document: {data.get('title', data.get('filename', 'Unknown'))}",
+                            'content': content
+                        })
+    except Exception as e:
+        print(f"[ERROR] Error fetching research documents: {e}")
+
+    return documents_context
+
+
+def read_document_content(gcs_path, mime_type=''):
+    """Read content from a document in GCS."""
+    if not gcs_path:
+        return None
+
+    try:
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(gcs_path)
+        content = blob.download_as_bytes()
+
+        # For text-based files, decode to string
+        if mime_type.startswith('text/') or gcs_path.endswith(('.txt', '.md', '.csv')):
+            return content.decode('utf-8', errors='ignore')[:10000]  # Limit to 10k chars
+
+        # For PDFs and other binary formats, we'd need extraction
+        # For now, skip binary files
+        if gcs_path.endswith('.pdf'):
+            return f"[PDF Document - content extraction not implemented]"
+
+        return None
+    except Exception as e:
+        print(f"[ERROR] Error reading document {gcs_path}: {e}")
+        return None
+
+
+@app.route("/api/ai/simple-research", methods=["POST"])
+def ai_simple_research():
+    """AI research query augmented with uploaded research documents from episode and series."""
+    data = request.get_json()
+    title = data.get('title', '')
+    description = data.get('description', '')
+    user_query = data.get('query', '')  # User's custom research prompt
+    episode_id = data.get('episodeId', '')
+    series_id = data.get('seriesId', '')
+    project_id = data.get('projectId', '')
+    save_research = data.get('save', True)
+
+    print(f"[DEBUG] simple-research called: title={title}, query={user_query[:50] if user_query else 'None'}..., episodeId={episode_id}, seriesId={series_id}")
+
+    # Fetch research documents for context
+    research_docs = get_research_document_contents(
+        episode_id=episode_id,
+        series_id=series_id,
+        project_id=project_id
+    )
+
+    print(f"[DEBUG] Found {len(research_docs)} research documents for context")
+
+    # Build context from research documents
+    context_section = ""
+    if research_docs:
+        context_section = "\n\n## Reference Documents\n\nThe following research documents have been uploaded and should be used as context:\n\n"
+        for doc in research_docs:
+            context_section += f"### {doc['source']}\n{doc['content']}\n\n"
+
+    # Use user's query if provided, otherwise fall back to title/description
+    research_query = user_query if user_query else f"Research background information for the documentary episode titled '{title}': {description}"
+
+    prompt = f"""You are researching for a documentary episode.
+
+Episode: {title}
+{f'Description: {description}' if description else ''}
+{context_section}
+
+## Research Request
+
+{research_query}
+
+## Instructions
+
+Based on {'the reference documents above and ' if research_docs else ''}the research request, provide:
+- Key facts and background information
+- Relevant sources and references (with URLs where possible)
+- Interview suggestions (people to talk to)
+- Visual/archive material recommendations
+
+{f'IMPORTANT: Incorporate and build upon the information from the {len(research_docs)} provided reference document(s). Reference specific details from them where relevant.' if research_docs else ''}
+
+Format your response with:
+- Clear sections with headers
+- Bullet points for key facts
+- Include real, clickable URLs to credible sources (news sites, Wikipedia, .gov, .edu, .org sites)
+- Mark each source with its URL in markdown link format: [Source Name](URL)"""
+
+    system_prompt = """You are a documentary research assistant. Provide comprehensive background research with real source links. Always format URLs as markdown links that can be clicked. Focus on factual, verifiable information from credible sources. When reference documents are provided, incorporate their information and expand upon it."""
+
+    result = generate_ai_response(prompt, system_prompt)
+
+    print(f"[DEBUG] AI response length: {len(result)} chars")
+
+    response_data = {
+        "result": result,
+        "title": title,
+        "query": research_query,
+        "saved": False,
+        "documentsUsed": len(research_docs)
+    }
+
+    # Save research to episode if episodeId provided
+    if save_research and episode_id and project_id:
+        try:
+            print(f"[DEBUG] Saving research to episode {episode_id}")
+            # Update the episode with the research content
+            episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+            episode_ref.update({
+                'research': result,
+                'researchGeneratedAt': datetime.utcnow().isoformat(),
+                'updatedAt': datetime.utcnow().isoformat()
+            })
+            response_data['saved'] = True
+            response_data['episodeId'] = episode_id
+            print(f"[DEBUG] Research saved successfully to episode {episode_id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save research: {e}")
+            response_data['saveError'] = str(e)
 
     return jsonify(response_data)
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["GET"])
+def get_episode_research(episode_id):
+    """Get saved research for an episode."""
+    print(f"[DEBUG] Getting research for episode {episode_id}")
+    try:
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            print(f"[DEBUG] Episode {episode_id} not found")
+            return jsonify({"error": "Episode not found"}), 404
+
+        research = episode.get('research', '')
+        generated_at = episode.get('researchGeneratedAt', '')
+
+        print(f"[DEBUG] Found research: {len(research)} chars, generated at: {generated_at}")
+
+        return jsonify({
+            "research": research,
+            "generatedAt": generated_at,
+            "episodeId": episode_id,
+            "episodeTitle": episode.get('title', '')
+        })
+    except Exception as e:
+        print(f"[ERROR] Failed to get research: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["DELETE"])
+def delete_episode_research(episode_id):
+    """Delete saved research for an episode."""
+    print(f"[DEBUG] Deleting research for episode {episode_id}")
+    try:
+        episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+        episode_ref.update({
+            'research': '',
+            'researchGeneratedAt': '',
+            'updatedAt': datetime.utcnow().isoformat()
+        })
+        print(f"[DEBUG] Research deleted for episode {episode_id}")
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"[ERROR] Failed to delete research: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/research", methods=["PUT"])
+def save_episode_research(episode_id):
+    """Save research to an episode and extract links as reference assets."""
+    print(f"[DEBUG] Saving research for episode {episode_id}")
+    try:
+        data = request.get_json()
+        research = data.get('research', '')
+
+        if not research:
+            return jsonify({"error": "No research content provided"}), 400
+
+        # Get episode to find projectId
+        episode_ref = db.collection(COLLECTIONS['episodes']).document(episode_id)
+        episode_doc = episode_ref.get()
+        if not episode_doc.exists:
+            return jsonify({"error": "Episode not found"}), 404
+
+        episode_data = episode_doc.to_dict()
+        project_id = episode_data.get('projectId')
+        episode_title = episode_data.get('title', 'Unknown Episode')
+
+        # Save research to episode
+        episode_ref.update({
+            'research': research,
+            'researchGeneratedAt': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat()
+        })
+        print(f"[DEBUG] Research saved for episode {episode_id}, length: {len(research)}")
+
+        # Extract markdown links and create assets as reference links
+        links_created = 0
+        markdown_links = []
+
+        if project_id:
+            # Find all markdown links: [text](url)
+            markdown_links = re.findall(r'\[([^\]]+)\]\((https?://[^)]+)\)', research)
+            print(f"[DEBUG] Found {len(markdown_links)} links in research")
+
+            for link_text, link_url in markdown_links:
+                try:
+                    # Check if asset with this URL already exists for this project
+                    existing = db.collection(COLLECTIONS['assets']).where(
+                        'projectId', '==', project_id
+                    ).where(
+                        'source', '==', link_url
+                    ).limit(1).get()
+
+                    if len(list(existing)) > 0:
+                        print(f"[DEBUG] Asset already exists for URL: {link_url[:50]}...")
+                        continue
+
+                    # Create asset for this link as a reference (link only, no download)
+                    asset_data = {
+                        "projectId": project_id,
+                        "episodeId": episode_id,
+                        "title": link_text[:100],
+                        "type": "Reference",
+                        "source": link_url,
+                        "status": "Identified",
+                        "isSourceDocument": False,
+                        "isResearchLink": True,
+                        "sourceEpisode": episode_title,
+                        "notes": f"Extracted from research for: {episode_title}",
+                        "createdAt": datetime.utcnow().isoformat(),
+                        "updatedAt": datetime.utcnow().isoformat()
+                    }
+                    doc_ref = db.collection(COLLECTIONS['assets']).document()
+                    doc_ref.set(asset_data)
+                    links_created += 1
+                    print(f"[DEBUG] Created asset: {link_text[:50]}...")
+                except Exception as link_error:
+                    print(f"[ERROR] Failed to create asset for {link_url}: {link_error}")
+
+        print(f"[DEBUG] Created {links_created} new reference assets")
+        return jsonify({
+            "success": True,
+            "episodeId": episode_id,
+            "linksExtracted": len(markdown_links),
+            "assetsCreated": links_created
+        })
+    except Exception as e:
+        print(f"[ERROR] Failed to save research: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/ai/interview-questions", methods=["POST"])
@@ -1148,99 +1827,13 @@ Suggest themes, storylines, key questions to answer, and unique perspectives."""
 
 @app.route("/api/ai/episode-research", methods=["POST"])
 def ai_episode_research():
-    """Generate research for a documentary episode using simple AI query."""
-    data = request.get_json()
-    episode_id = data.get('episodeId', '')
-    episode_title = data.get('episodeTitle', '')
-    episode_description = data.get('episodeDescription', '')
-    project_title = data.get('projectTitle', '')
-    project_description = data.get('projectDescription', '')
-    project_style = data.get('projectStyle', '')
-    project_id = data.get('projectId', '')
-
-    system_prompt = f"""You are a documentary research specialist. Your task is to provide comprehensive research for documentary production.
-
-## PROJECT CONTEXT
-- Project: {project_title}
-- Description: {project_description}
-- Style: {project_style or 'Documentary'}
-
-## RESEARCH OUTPUT FORMAT
-
-Provide your research in these sections:
-
-### Key Facts & Background
-- Important facts about the topic
-- Historical context
-- Current relevance
-
-### Suggested Sources
-For each source, provide:
-- Source name and type (website, book, archive, etc.)
-- URL if available (use real URLs from known sources like BBC, Reuters, Wikipedia, government sites, etc.)
-- What information it provides
-
-### Potential Interview Subjects
-- Experts in the field
-- People with direct experience
-- Their credentials and why they're relevant
-
-### Visual & Audio Ideas
-- Stock footage suggestions
-- Archive material locations
-- B-roll concepts
-
-### Timeline of Key Events
-- Important dates and milestones
-- Chronological context
-
-### Further Reading
-- Books, articles, documentaries on the topic
-- Include links where possible
-
-Remember to provide REAL URLs from credible sources (news sites, .gov, .edu, .org, Wikipedia, etc.)."""
-
-    prompt = f"""Research this documentary episode:
-
-Episode Title: {episode_title}
-Episode Description: {episode_description}
-
-Provide comprehensive research with real source links that the production team can use."""
-
-    # Simple AI query - no grounding or downloads
-    try:
-        result = generate_ai_response(prompt, system_prompt)
-    except Exception as e:
-        print(f"Research generation error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-    # Extract URLs from the response
-    urls = extract_urls(result)
-
-    response_data = {
-        "result": result,
+    """Episode research - disabled in this build."""
+    return jsonify({
+        "result": "AI Research functionality is not available in this build.",
         "saved": False,
-        "sources": [{"url": url, "status": "found"} for url in urls[:10]]
-    }
-
-    # Auto-save research to database
-    if project_id and episode_id:
-        try:
-            research_data = {
-                'projectId': project_id,
-                'episodeId': episode_id,
-                'title': f"Research: {episode_title}",
-                'content': result,
-                'category': 'Episode Research',
-                'sourceCount': len(urls)
-            }
-            saved_research = create_doc('research', research_data)
-            response_data["saved"] = True
-            response_data["researchId"] = saved_research['id']
-        except Exception as e:
-            print(f"Error saving research: {e}")
-
-    return jsonify(response_data)
+        "sources": [],
+        "disabled": True
+    })
 
 
 @app.route("/api/ai/generate-topics", methods=["POST"])
