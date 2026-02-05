@@ -14,13 +14,13 @@ from dotenv import load_dotenv
 load_dotenv()  # Load .env file for local development
 
 import requests
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 from google.cloud import firestore, storage
 from weasyprint import HTML
 import vertexai
 from vertexai.generative_models import GenerativeModel, Tool, grounding
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 
 # Configuration
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "your-project-id")
@@ -613,8 +613,8 @@ def ensure_bucket_exists(bucket_name):
 
 @app.route("/")
 def index():
-    """Render the main app interface."""
-    return render_template("index.html", app_version=APP_VERSION, app_env=APP_ENV)
+    """Serve the main app interface from static folder."""
+    return send_from_directory('static', 'index.html')
 
 
 @app.route("/health")

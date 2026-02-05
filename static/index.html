@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AiM | Documentary Workflow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <script>
+        // Configure marked
+        marked.setOptions({ breaks: true, gfm: true });
+    </script>
+</head>
+<body>
+    <div id="app" class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="w-64 bg-[#111] border-r border-[#222] flex flex-col flex-shrink-0">
+            <!-- Logo -->
+            <div class="p-6 border-b border-[#222]">
+                <h1 class="text-3xl font-black tracking-tighter text-[#1a73e8]">AiM</h1>
+                <p class="text-[10px] text-gray-500 font-mono mt-1">Documentary Workflow</p>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
+                <!-- Dashboard -->
+                <button onclick="setPhase('dashboard')" id="nav-dashboard" class="nav-btn w-full text-left p-3 rounded-lg flex items-center gap-3 transition">
+                    <span>🏠</span> Dashboard
+                </button>
+
+                <!-- Notifications -->
+                <button onclick="setPhase('notifications')" id="nav-notifications" class="nav-btn w-full text-left p-3 rounded-lg flex items-center justify-between text-gray-400 hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <span>🔔</span> Notifications
+                    </div>
+                    <span id="notification-badge" class="hidden bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.2rem] text-center">0</span>
+                </button>
+
+                <!-- AI Research -->
+                <button onclick="setPhase('ai-research')" id="nav-ai-research" class="nav-btn w-full text-left p-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-[#1a73e8]/10 hover:text-[#1a73e8] transition">
+                    <span class="text-[#1a73e8]">🤖</span> AI Deep Research
+                </button>
+
+                <!-- Project Workflow -->
+                <div class="pt-6">
+                    <p class="px-3 text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-2">Project Workflow</p>
+                    <div class="space-y-1" id="phase-nav">
+                        <!-- Phases will be rendered here -->
+                    </div>
+                </div>
+            </nav>
+
+            <!-- User Section -->
+            <div class="p-4 border-t border-[#222]">
+                <div class="bg-[#1a1a1a] rounded-lg p-3 mb-2">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-red-600 to-orange-500 flex items-center justify-center text-white font-bold text-sm">P</div>
+                        <div class="text-left overflow-hidden">
+                            <p class="text-xs font-medium text-white truncate">Producer</p>
+                            <p class="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Active Session</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="showProjectsModal()" class="flex-1 text-[9px] bg-[#222] hover:bg-white hover:text-black text-gray-400 py-2 rounded transition uppercase font-bold">
+                        Switch Project
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto p-8" id="main-content">
+            <div class="max-w-6xl mx-auto">
+                <!-- Content will be rendered here -->
+                <div class="flex items-center justify-center h-64">
+                    <div class="text-center">
+                        <div class="w-8 h-8 border-2 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p class="text-gray-500">Loading...</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-[#1a1a1a] border border-[#333] w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="flex justify-between items-center p-6 border-b border-[#222]">
+                <h3 id="modal-title" class="text-xl font-bold text-white">Modal</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            <div id="modal-body" class="p-6 overflow-y-auto flex-1"></div>
+        </div>
+    </div>
+
+    <!-- Projects Modal -->
+    <div id="projects-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-[#1a1a1a] border border-[#333] w-full max-w-lg max-h-[80vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="flex justify-between items-center p-6 border-b border-[#222]">
+                <h3 class="text-xl font-bold text-white">Projects</h3>
+                <button onclick="closeProjectsModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            <div id="projects-modal-body" class="p-6 overflow-y-auto flex-1"></div>
+        </div>
+    </div>
+
+    <!-- AI Modal -->
+    <div id="ai-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-[#1a1a1a] border border-[#333] w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="flex justify-between items-center p-6 border-b border-[#222]">
+                <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                    <span class="text-[#1a73e8]">🤖</span> AI Assistant
+                </h3>
+                <button onclick="closeAIModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            <div id="ai-modal-content" class="p-6 overflow-y-auto flex-1"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

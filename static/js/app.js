@@ -1,0 +1,2784 @@
+        // =============================================================================
+        // STATE
+        // =============================================================================
+        const state = {
+            projects: [],
+            selectedProject: null,
+            currentPhase: 'dashboard',
+            projectData: null,
+            // Collections
+            episodes: [],
+            series: [],
+            research: [],
+            interviews: [],
+            shots: [],
+            assets: [],
+            scripts: [],
+            // Production Factory data
+            dashboardStats: null,
+            workflowOverview: [],
+            selectedEpisode: null,
+            episodeWorkspace: {
+                activeTab: 'research',
+                researchDocs: [],
+                archiveLogs: [],
+                transcripts: [],
+                scriptVersions: [],
+                complianceItems: [],
+                agentTasks: []
+            }
+        };
+
+        // Production Factory 5-Phase Workflow
+        const WORKFLOW_PHASES = {
+            research: { order: 1, name: 'Research', icon: '🔬', color: 'blue' },
+            archive: { order: 2, name: 'Archive', icon: '📼', color: 'purple' },
+            script: { order: 3, name: 'Script', icon: '📝', color: 'green' },
+            voiceover: { order: 4, name: 'Voiceover', icon: '🎙️', color: 'orange' },
+            assembly: { order: 5, name: 'Assembly', icon: '🎬', color: 'red' }
+        };
+
+        const PHASES = [
+            { id: 'episodes', label: '1. Episodes', icon: '🎬', description: 'Episode Management' },
+            { id: 'research', label: '2. Research', icon: '🔬', description: 'Deep Research' },
+            { id: 'archive', label: '3. Archive', icon: '📼', description: 'Archive & Footage' },
+            { id: 'scripting', label: '4. Scripting', icon: '📝', description: 'Script Generation' },
+            { id: 'interviews', label: '5. Interviews', icon: '💬', description: 'Interview Management' },
+            { id: 'production', label: '6. Production', icon: '🎥', description: 'Shot Planning' },
+            { id: 'compliance', label: '7. Compliance', icon: '✅', description: 'Compliance & Export' }
+        ];
+
+        // =============================================================================
+        // API HELPERS
+        // =============================================================================
+        async function api(endpoint, method = 'GET', data = null) {
+            const options = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (data) options.body = JSON.stringify(data);
+
+            const response = await fetch(endpoint, options);
+            return response.json();
+        }
+
+        // =============================================================================
+        // INITIALIZATION
+        // =============================================================================
+        async function init() {
+            await loadProjects();
+            renderPhaseNav();
+
+            if (state.projects.length === 0) {
+                // No projects - show create project
+                renderEmptyState();
+            } else {
+                // Load first project or saved project
+                const savedProjectId = localStorage.getItem('selectedProject');
+                const project = state.projects.find(p => p.id === savedProjectId) || state.projects[0];
+                await selectProject(project.id);
+            }
+        }
+
+        async function loadProjects() {
+            state.projects = await api('/api/projects');
+        }
+
+        async function selectProject(projectId) {
+            state.selectedProject = projectId;
+            localStorage.setItem('selectedProject', projectId);
+            await loadProjectData();
+            setPhase('dashboard');
+        }
+
+        async function loadProjectData() {
+            if (!state.selectedProject) return;
+
+            const [project, episodes, series, research, interviews, shots, assets, scripts, dashboard, workflowOverview] = await Promise.all([
+                api(`/api/projects/${state.selectedProject}`),
+                api(`/api/projects/${state.selectedProject}/episodes`),
+                api(`/api/projects/${state.selectedProject}/series`),
+                api(`/api/projects/${state.selectedProject}/research`),
+                api(`/api/projects/${state.selectedProject}/interviews`),
+                api(`/api/projects/${state.selectedProject}/shots`),
+                api(`/api/projects/${state.selectedProject}/assets`),
+                api(`/api/projects/${state.selectedProject}/scripts`),
+                api(`/api/projects/${state.selectedProject}/dashboard`).catch(() => null),
+                api(`/api/projects/${state.selectedProject}/workflow-overview`).catch(() => [])
+            ]);
+
+            state.projectData = project;
+            state.episodes = episodes || [];
+            state.series = series || [];
+            state.research = research || [];
+            state.interviews = interviews || [];
+            state.shots = shots || [];
+            state.assets = assets || [];
+            state.scripts = scripts || [];
+            state.dashboardStats = dashboard;
+            state.workflowOverview = workflowOverview || [];
+        }
+
+        async function loadEpisodeWorkspace(episodeId) {
+            state.selectedEpisode = episodeId;
+
+            const [workflow, researchDocs, archiveLogs, transcripts, scriptVersions, complianceItems, agentTasks] = await Promise.all([
+                api(`/api/episodes/${episodeId}/workflow`).catch(() => null),
+                api(`/api/episodes/${episodeId}/research-bucket`).catch(() => []),
+                api(`/api/episodes/${episodeId}/archive-logs`).catch(() => []),
+                api(`/api/episodes/${episodeId}/transcripts`).catch(() => []),
+                api(`/api/episodes/${episodeId}/script-versions`).catch(() => []),
+                api(`/api/episodes/${episodeId}/compliance`).catch(() => []),
+                api(`/api/episodes/${episodeId}/agent-tasks`).catch(() => [])
+            ]);
+
+            state.episodeWorkspace = {
+                activeTab: 'research',
+                workflow: workflow,
+                researchDocs: researchDocs || [],
+                archiveLogs: archiveLogs || [],
+                transcripts: transcripts || [],
+                scriptVersions: scriptVersions || [],
+                complianceItems: complianceItems || [],
+                agentTasks: agentTasks || []
+            };
+        }
+
+        // =============================================================================
+        // NAVIGATION
+        // =============================================================================
+        function renderPhaseNav() {
+            const container = document.getElementById('phase-nav');
+            container.innerHTML = PHASES.map(phase => `
+                <button onclick="setPhase('${phase.id}')" id="nav-${phase.id}"
+                    class="nav-btn w-full text-left p-3 rounded-lg text-sm flex items-center gap-3 transition text-gray-400 hover:bg-white/5">
+                    <span class="text-lg opacity-80">${phase.icon}</span>
+                    <span>${phase.label}</span>
+                </button>
+            `).join('');
+        }
+
+        function setPhase(phase) {
+            state.currentPhase = phase;
+            updateNavActive();
+            render();
+        }
+
+        function updateNavActive() {
+            // Remove active from all
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('bg-white/10', 'text-white', 'bg-red-600/20', 'text-red-500', 'font-semibold');
+                btn.classList.add('text-gray-400');
+            });
+
+            // Add active to current
+            const activeBtn = document.getElementById(`nav-${state.currentPhase}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('text-gray-400');
+                if (state.currentPhase === 'dashboard') {
+                    activeBtn.classList.add('bg-white/10', 'text-white');
+                } else {
+                    activeBtn.classList.add('bg-red-600/20', 'text-red-500', 'font-semibold');
+                }
+            }
+        }
+
+        // =============================================================================
+        // RENDERING
+        // =============================================================================
+        function render() {
+            const content = document.getElementById('main-content');
+
+            switch (state.currentPhase) {
+                case 'dashboard':
+                    renderDashboard(content);
+                    break;
+                case 'episodes':
+                    renderEpisodes(content);
+                    break;
+                case 'episode-workspace':
+                    renderEpisodeWorkspace(content);
+                    break;
+                case 'research':
+                    renderResearch(content);
+                    break;
+                case 'archive':
+                    renderArchive(content);
+                    break;
+                case 'scripting':
+                    renderScripts(content);
+                    break;
+                case 'interviews':
+                    renderInterviews(content);
+                    break;
+                case 'production':
+                    renderProduction(content);
+                    break;
+                case 'compliance':
+                    renderCompliance(content);
+                    break;
+                case 'review':
+                    renderReview(content);
+                    break;
+                case 'ai-research':
+                    renderAIResearch(content);
+                    break;
+                default:
+                    renderDashboard(content);
+            }
+        }
+
+        function renderEmptyState() {
+            const content = document.getElementById('main-content');
+            content.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex flex-col items-center justify-center h-[60vh] text-center">
+                        <div class="text-6xl mb-6">🎬</div>
+                        <h2 class="text-3xl font-black text-white mb-4">Welcome to AiM</h2>
+                        <p class="text-gray-500 mb-8 max-w-md">
+                            AI-powered documentary workflow management. Create your first project to get started.
+                        </p>
+                        <button onclick="showNewProjectModal()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition shadow-lg shadow-red-900/20">
+                            + Create Project
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // =============================================================================
+        // DASHBOARD
+        // =============================================================================
+        function renderDashboard(container) {
+            if (!state.projectData) {
+                renderEmptyState();
+                return;
+            }
+
+            const progress = calculateProgress();
+            const stats = state.dashboardStats || {};
+            const phaseStats = stats.phaseStats || {};
+
+            // Calculate workflow metrics
+            const totalEpisodes = state.episodes.length;
+            const completedEpisodes = state.workflowOverview.filter(e =>
+                e.phases?.assembly?.status === 'approved'
+            ).length;
+            const inReview = state.workflowOverview.filter(e =>
+                Object.values(e.phases || {}).some(p => p.status === 'review')
+            ).length;
+
+            container.innerHTML = `
+                <div class="max-w-7xl mx-auto fade-in">
+                    <header class="flex justify-between items-end mb-8">
+                        <div>
+                            <h2 class="text-4xl font-black text-white">Production Factory</h2>
+                            <p class="text-gray-500 mt-2">${state.projectData.title}</p>
+                        </div>
+                        <div class="flex gap-3">
+                            <button onclick="showNewSeriesModal()" class="bg-[#1a1a1a] border border-[#333] hover:border-[#1a73e8] text-white font-bold py-2 px-4 rounded-lg transition">
+                                + Series
+                            </button>
+                            <button onclick="showNewProjectModal()" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-2 px-4 rounded-lg transition">
+                                + Project
+                            </button>
+                        </div>
+                    </header>
+
+                    <!-- Workflow Phase Progress -->
+                    <div class="bg-[#151515] border border-[#222] rounded-xl p-6 mb-6">
+                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Workflow Pipeline</h3>
+                        <div class="flex justify-between items-center gap-2">
+                            ${Object.entries(WORKFLOW_PHASES).map(([key, phase]) => {
+                                const phaseData = phaseStats[key] || {};
+                                const total = (phaseData.pending || 0) + (phaseData.in_progress || 0) + (phaseData.review || 0) + (phaseData.approved || 0);
+                                const approved = phaseData.approved || 0;
+                                const inProgress = phaseData.in_progress || 0;
+                                const review = phaseData.review || 0;
+                                return `
+                                    <div class="flex-1 text-center">
+                                        <div class="text-2xl mb-2">${phase.icon}</div>
+                                        <div class="text-xs font-bold text-white">${phase.name}</div>
+                                        <div class="mt-2 flex justify-center gap-1">
+                                            <span class="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded">${approved}</span>
+                                            ${review > 0 ? `<span class="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-xs rounded">${review}</span>` : ''}
+                                            ${inProgress > 0 ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded">${inProgress}</span>` : ''}
+                                        </div>
+                                    </div>
+                                    ${phase.order < 5 ? '<div class="text-gray-600">→</div>' : ''}
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                        ${renderStatCard('Total Episodes', totalEpisodes, '🎬')}
+                        ${renderStatCard('Completed', completedEpisodes, '✅')}
+                        ${renderStatCard('In Review', inReview, '👁️')}
+                        ${renderStatCard('Series', state.series.length, '📺')}
+                        ${renderStatCard('Assets', state.assets.length, '📼')}
+                    </div>
+
+                    <!-- Bottleneck Alerts -->
+                    ${inReview > 0 ? `
+                        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mb-6">
+                            <div class="flex items-center gap-3">
+                                <span class="text-2xl">⚠️</span>
+                                <div>
+                                    <h4 class="font-bold text-yellow-400">Human Review Required</h4>
+                                    <p class="text-sm text-yellow-300/70">${inReview} episode(s) waiting for producer approval</p>
+                                </div>
+                                <button onclick="setPhase('episodes')" class="ml-auto bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 px-4 py-2 rounded-lg transition">
+                                    Review Now
+                                </button>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <!-- Series Overview -->
+                    ${state.series.length > 0 ? `
+                        <div class="bg-[#151515] border border-[#222] rounded-xl p-6 mb-6">
+                            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Series Overview</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                ${state.series.map(series => {
+                                    const seriesEpisodes = state.episodes.filter(e => e.seriesId === series.id);
+                                    const completed = state.workflowOverview.filter(e =>
+                                        e.seriesId === series.id && e.phases?.assembly?.status === 'approved'
+                                    ).length;
+                                    return `
+                                        <div class="bg-[#1a1a1a] border border-[#333] rounded-lg p-4 hover:border-[#1a73e8] transition cursor-pointer" onclick="filterBySeries('${series.id}')">
+                                            <h4 class="font-bold text-white">${series.title}</h4>
+                                            <p class="text-sm text-gray-500 mt-1">${seriesEpisodes.length} episodes • ${completed} completed</p>
+                                            <div class="mt-3 h-1.5 bg-[#222] rounded-full overflow-hidden">
+                                                <div class="h-full bg-[#1a73e8]" style="width: ${seriesEpisodes.length > 0 ? (completed / seriesEpisodes.length * 100) : 0}%"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <!-- Quick Actions -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <button onclick="setPhase('episodes')" class="bg-[#1a1a1a] border border-[#222] hover:border-[#1a73e8] p-5 rounded-xl text-left transition group">
+                            <div class="text-2xl mb-2">🎬</div>
+                            <h4 class="font-bold text-white group-hover:text-[#1a73e8] transition">Episode Workspace</h4>
+                            <p class="text-xs text-gray-500 mt-1">Manage episode workflow</p>
+                        </button>
+                        <button onclick="setPhase('scripting')" class="bg-[#1a1a1a] border border-[#222] hover:border-green-600 p-5 rounded-xl text-left transition group">
+                            <div class="text-2xl mb-2">🤖</div>
+                            <h4 class="font-bold text-white group-hover:text-green-500 transition">AI Script Swarm</h4>
+                            <p class="text-xs text-gray-500 mt-1">Multi-agent script generation</p>
+                        </button>
+                        <button onclick="setPhase('archive')" class="bg-[#1a1a1a] border border-[#222] hover:border-purple-600 p-5 rounded-xl text-left transition group">
+                            <div class="text-2xl mb-2">📼</div>
+                            <h4 class="font-bold text-white group-hover:text-purple-500 transition">Archive Import</h4>
+                            <p class="text-xs text-gray-500 mt-1">Import Quickture logs</p>
+                        </button>
+                        <button onclick="setPhase('compliance')" class="bg-[#1a1a1a] border border-[#222] hover:border-red-600 p-5 rounded-xl text-left transition group">
+                            <div class="text-2xl mb-2">✅</div>
+                            <h4 class="font-bold text-white group-hover:text-red-500 transition">Compliance</h4>
+                            <p class="text-xs text-gray-500 mt-1">Export audit trail</p>
+                        </button>
+                    </div>
+
+                    <!-- Recent Episode Activity -->
+                    ${state.workflowOverview.length > 0 ? `
+                        <div class="mt-6 bg-[#151515] border border-[#222] rounded-xl p-6">
+                            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Episode Activity</h3>
+                            <div class="space-y-2 max-h-64 overflow-y-auto">
+                                ${state.workflowOverview.slice(0, 10).map(ep => `
+                                    <div class="flex items-center justify-between p-3 bg-[#1a1a1a] rounded-lg hover:bg-[#222] transition cursor-pointer" onclick="openEpisodeWorkspace('${ep.episodeId}')">
+                                        <div class="flex items-center gap-3">
+                                            <span class="text-lg">${WORKFLOW_PHASES[ep.currentPhase]?.icon || '🎬'}</span>
+                                            <div>
+                                                <h4 class="font-medium text-white text-sm">${ep.episodeTitle}</h4>
+                                                <p class="text-xs text-gray-500">${WORKFLOW_PHASES[ep.currentPhase]?.name || ep.currentPhase}</p>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xs text-gray-500">${Math.round(ep.progress || 0)}%</span>
+                                            <div class="w-20 h-1.5 bg-[#333] rounded-full overflow-hidden">
+                                                <div class="h-full bg-[#1a73e8]" style="width: ${ep.progress || 0}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function filterBySeries(seriesId) {
+            state.filterSeriesId = seriesId;
+            setPhase('episodes');
+        }
+
+        async function openEpisodeWorkspace(episodeId) {
+            await loadEpisodeWorkspace(episodeId);
+            setPhase('episode-workspace');
+        }
+
+        function renderStatCard(label, value, icon) {
+            return `
+                <div class="bg-[#1a1a1a] border border-[#222] rounded-xl p-4">
+                    <div class="flex items-center gap-3">
+                        <span class="text-2xl">${icon}</span>
+                        <div>
+                            <p class="text-2xl font-black text-white">${value}</p>
+                            <p class="text-[10px] text-gray-500 uppercase tracking-wider">${label}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function calculateProgress() {
+            const total = state.episodes.length + state.research.length + state.interviews.length + state.scripts.length;
+            if (total === 0) return 0;
+            // Simple progress based on content
+            return Math.min(Math.round((total / 20) * 100), 100);
+        }
+
+        function getStatusColor(status) {
+            const colors = {
+                'Planning': 'bg-blue-600/20 text-blue-400',
+                'In Production': 'bg-yellow-600/20 text-yellow-400',
+                'Research': 'bg-purple-600/20 text-purple-400',
+                'Completed': 'bg-green-600/20 text-green-400'
+            };
+            return colors[status] || 'bg-gray-600/20 text-gray-400';
+        }
+
+        // =============================================================================
+        // EPISODES
+        // =============================================================================
+        function renderEpisodes(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 02: Episodes</h2>
+                            <p class="text-gray-500">Plan and organize your documentary episodes.</p>
+                        </div>
+                        <button onclick="showAddModal('episode')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                            + Add Episode
+                        </button>
+                    </div>
+
+                    ${state.episodes.length === 0 ? `
+                        <div class="text-center py-16">
+                            <div class="text-4xl mb-4">🎬</div>
+                            <p class="text-gray-500">No episodes yet. Add your first episode to get started.</p>
+                        </div>
+                    ` : `
+                        <div class="space-y-4">
+                            ${state.episodes.map((ep, index) => `
+                                <div class="bg-[#151515] border border-[#222] rounded-xl p-6 hover:border-red-600/50 transition group">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex items-start gap-4">
+                                            <span class="text-xs font-black bg-red-600 text-white px-2 py-1 rounded">
+                                                EP${String(index + 1).padStart(2, '0')}
+                                            </span>
+                                            <div>
+                                                <h3 class="text-lg font-bold text-white group-hover:text-red-500 transition">${ep.title}</h3>
+                                                <p class="text-sm text-gray-500 mt-1">${ep.description || 'No description'}</p>
+                                                ${ep.duration ? `<p class="text-xs text-gray-600 mt-2">Duration: ${ep.duration}</p>` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${getStatusColor(ep.status)}">
+                                                ${ep.status || 'Planning'}
+                                            </span>
+                                            <button onclick="showEditModal('episode', '${ep.id}')" class="p-2 text-gray-400 hover:text-white transition">✏️</button>
+                                            <button onclick="deleteItem('episodes', '${ep.id}')" class="p-2 text-gray-400 hover:text-red-500 transition">🗑️</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        // =============================================================================
+        // RESEARCH
+        // =============================================================================
+        function renderResearch(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 01: Research</h2>
+                            <p class="text-gray-500">Intelligent Discovery & Research Notes.</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="setPhase('ai-research')" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-2 px-4 rounded-lg transition">
+                                🤖 AI Research
+                            </button>
+                            <button onclick="showAddModal('research')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                                + Add Note
+                            </button>
+                        </div>
+                    </div>
+
+                    ${state.research.length === 0 ? `
+                        <div class="text-center py-16">
+                            <div class="text-4xl mb-4">🔍</div>
+                            <p class="text-gray-500">No research notes yet. Start researching your documentary.</p>
+                        </div>
+                    ` : `
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            ${state.research.map(r => `
+                                <div class="bg-[#151515] border border-[#222] rounded-xl p-6 hover:border-purple-600/50 transition">
+                                    <div class="flex justify-between items-start mb-3">
+                                        <h3 class="font-bold text-white">${r.title}</h3>
+                                        <div class="flex gap-1">
+                                            <button onclick="showEditModal('research', '${r.id}')" class="p-1 text-gray-400 hover:text-white transition text-sm">✏️</button>
+                                            <button onclick="deleteItem('research', '${r.id}')" class="p-1 text-gray-400 hover:text-red-500 transition text-sm">🗑️</button>
+                                        </div>
+                                    </div>
+                                    ${r.category ? `<span class="text-[10px] font-bold bg-purple-600/20 text-purple-400 px-2 py-0.5 rounded uppercase">${r.category}</span>` : ''}
+                                    <div class="text-sm text-gray-400 mt-3 line-clamp-2 markdown-content">${marked.parse(r.content || '')}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        // =============================================================================
+        // AI RESEARCH
+        // =============================================================================
+        function renderAIResearch(container) {
+            container.innerHTML = `
+                <div class="max-w-4xl mx-auto fade-in">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-black uppercase italic tracking-tighter">AI Deep Research</h2>
+                        <p class="text-gray-500">Generate comprehensive research with AI assistance.</p>
+                    </div>
+
+                    <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                        <div class="mb-6">
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Research Topic</label>
+                            <input type="text" id="ai-research-query"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-4 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Enter your research topic (e.g., 'Apollo 11 mission timeline and key events')">
+                        </div>
+
+                        <button onclick="runAIResearch()" id="ai-research-btn"
+                            class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-4 px-6 rounded-lg transition flex items-center justify-center gap-2">
+                            <span>🤖</span> Generate Research
+                        </button>
+                    </div>
+
+                    <div id="ai-research-result" class="mt-6"></div>
+                </div>
+            `;
+        }
+
+        async function runAIResearch() {
+            const query = document.getElementById('ai-research-query').value;
+            if (!query.trim()) {
+                alert('Please enter a research topic');
+                return;
+            }
+
+            const btn = document.getElementById('ai-research-btn');
+            const resultDiv = document.getElementById('ai-research-result');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="animate-spin">⏳</span> Researching...';
+
+            resultDiv.innerHTML = `
+                <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 border-2 border-[#1a73e8] border-t-transparent rounded-full animate-spin"></div>
+                        <span class="text-[#1a73e8] font-mono">Deep Research in progress...</span>
+                    </div>
+                </div>
+            `;
+
+            try {
+                const data = await api('/api/ai/research', 'POST', {
+                    query: query,
+                    projectId: state.selectedProject,
+                    downloadSources: true
+                });
+
+                resultDiv.innerHTML = `
+                    <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-white">Research Results</h3>
+                            <button onclick="saveResearchAsNote('${query.replace(/'/g, "\\'")}', this)"
+                                class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition">
+                                💾 Save as Note
+                            </button>
+                        </div>
+                        <div class="markdown-content text-gray-300">${marked.parse(data.result || '')}</div>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="bg-red-900/20 border border-red-600/50 rounded-xl p-6 text-red-400">
+                        Error: ${error.message}
+                    </div>
+                `;
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = '<span>🤖</span> Generate Research';
+        }
+
+        async function saveResearchAsNote(title, btn) {
+            const resultDiv = document.querySelector('#ai-research-result .markdown-content');
+            if (!resultDiv) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            await api('/api/research', 'POST', {
+                projectId: state.selectedProject,
+                title: `AI Research: ${title}`,
+                content: resultDiv.innerHTML,
+                category: 'AI Generated'
+            });
+
+            await loadProjectData();
+            btn.textContent = '✓ Saved!';
+            btn.classList.remove('bg-green-600', 'hover:bg-green-700');
+            btn.classList.add('bg-gray-600');
+        }
+
+        // =============================================================================
+        // ARCHIVE (Assets)
+        // =============================================================================
+        function renderArchive(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 03: Archive</h2>
+                            <p class="text-gray-500">Digital Asset Management.</p>
+                        </div>
+                        <button onclick="showAddModal('asset')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                            + Add Asset
+                        </button>
+                    </div>
+
+                    ${state.assets.length === 0 ? `
+                        <div class="text-center py-16">
+                            <div class="text-4xl mb-4">📼</div>
+                            <p class="text-gray-500">No assets yet. Add media files, documents, and archive materials.</p>
+                        </div>
+                    ` : `
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            ${state.assets.map(a => `
+                                <div class="bg-[#151515] border border-[#222] rounded-xl p-4 hover:border-purple-600/50 transition">
+                                    <div class="flex items-start justify-between mb-3">
+                                        <span class="text-2xl">${getAssetIcon(a.type)}</span>
+                                        <div class="flex gap-1">
+                                            <button onclick="showEditModal('asset', '${a.id}')" class="p-1 text-gray-400 hover:text-white transition text-sm">✏️</button>
+                                            <button onclick="deleteItem('assets', '${a.id}')" class="p-1 text-gray-400 hover:text-red-500 transition text-sm">🗑️</button>
+                                        </div>
+                                    </div>
+                                    <h4 class="font-bold text-white text-sm truncate">${a.title}</h4>
+                                    <p class="text-[10px] text-gray-500 mt-1">${a.type || 'Document'} • ${a.source || 'Unknown source'}</p>
+                                    <span class="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded ${getStatusColor(a.status)}">
+                                        ${a.status || 'Pending'}
+                                    </span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function getAssetIcon(type) {
+            const icons = {
+                'Video': '🎬',
+                'Audio': '🎵',
+                'Image': '🖼️',
+                'Document': '📄',
+                'Archive': '📁'
+            };
+            return icons[type] || '📎';
+        }
+
+        // =============================================================================
+        // SCRIPTS
+        // =============================================================================
+        function renderScripts(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 04: Scripting</h2>
+                            <p class="text-gray-500">Narrative Development & Script Writing.</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="generateScriptOutline()" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-2 px-4 rounded-lg transition">
+                                🤖 AI Outline
+                            </button>
+                            <button onclick="showAddModal('script')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                                + Add Script
+                            </button>
+                        </div>
+                    </div>
+
+                    ${state.scripts.length === 0 ? `
+                        <div class="text-center py-16">
+                            <div class="text-4xl mb-4">📝</div>
+                            <p class="text-gray-500">No scripts yet. Start writing or generate with AI.</p>
+                        </div>
+                    ` : `
+                        <div class="space-y-4">
+                            ${state.scripts.map(s => `
+                                <div class="bg-[#151515] border border-[#222] rounded-xl overflow-hidden hover:border-purple-600/50 transition">
+                                    <div class="p-4 border-b border-[#222] flex justify-between items-center">
+                                        <h3 class="font-bold text-white">${s.title}</h3>
+                                        <div class="flex gap-2">
+                                            <button onclick="showEditModal('script', '${s.id}')" class="p-2 text-gray-400 hover:text-white transition">✏️</button>
+                                            <button onclick="deleteItem('scripts', '${s.id}')" class="p-2 text-gray-400 hover:text-red-500 transition">🗑️</button>
+                                        </div>
+                                    </div>
+                                    <div class="p-4 bg-[#0a0a0a] font-mono text-sm text-gray-400 max-h-48 overflow-y-auto">
+                                        <pre class="whitespace-pre-wrap">${escapeHtml(s.content || 'No content')}</pre>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        async function generateScriptOutline() {
+            if (state.episodes.length === 0) {
+                alert('Please create at least one episode first');
+                return;
+            }
+
+            const episode = state.episodes[0];
+            showAIModal();
+
+            document.getElementById('ai-modal-content').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="w-8 h-8 border-2 border-[#1a73e8] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p class="text-gray-500">Generating script outline...</p>
+                </div>
+            `;
+
+            try {
+                const data = await api('/api/ai/script-outline', 'POST', {
+                    title: episode.title,
+                    description: episode.description,
+                    duration: episode.duration || '45 minutes'
+                });
+
+                document.getElementById('ai-modal-content').innerHTML = `
+                    <div class="markdown-content">${marked.parse(data.result || '')}</div>
+                    <div class="mt-6 flex gap-2">
+                        <button onclick="saveScriptFromAI('${episode.title.replace(/'/g, "\\'")}', this)"
+                            class="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition">
+                            💾 Save Script
+                        </button>
+                        <button onclick="closeAIModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-lg transition">
+                            Close
+                        </button>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('ai-modal-content').innerHTML = `
+                    <div class="text-red-400">Error: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function saveScriptFromAI(title, btn) {
+            const content = document.querySelector('#ai-modal-content .markdown-content');
+            if (!content) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            await api('/api/scripts', 'POST', {
+                projectId: state.selectedProject,
+                title: `${title} - Outline`,
+                content: content.textContent
+            });
+
+            await loadProjectData();
+            closeAIModal();
+            setPhase('scripting');
+        }
+
+        // =============================================================================
+        // INTERVIEWS
+        // =============================================================================
+        function renderInterviews(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 05: Interviews</h2>
+                            <p class="text-gray-500">Expert Interview Planning & Questions.</p>
+                        </div>
+                        <button onclick="showAddModal('interview')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                            + Add Interview
+                        </button>
+                    </div>
+
+                    ${state.interviews.length === 0 ? `
+                        <div class="text-center py-16">
+                            <div class="text-4xl mb-4">💬</div>
+                            <p class="text-gray-500">No interviews planned yet.</p>
+                        </div>
+                    ` : `
+                        <div class="space-y-4">
+                            ${state.interviews.map(i => `
+                                <div class="bg-[#151515] border border-[#222] rounded-xl p-6 hover:border-yellow-600/50 transition">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex items-start gap-4">
+                                            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-600 to-orange-500 flex items-center justify-center text-white font-bold text-lg">
+                                                ${i.subject ? i.subject[0].toUpperCase() : '?'}
+                                            </div>
+                                            <div>
+                                                <h3 class="text-lg font-bold text-white">${i.subject}</h3>
+                                                <p class="text-sm text-gray-500">${i.role || 'No role specified'}</p>
+                                                ${i.notes ? `<p class="text-xs text-gray-600 mt-2">${i.notes}</p>` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${getInterviewStatusColor(i.status)}">
+                                                ${i.status || 'Requested'}
+                                            </span>
+                                            <button onclick="generateQuestions('${i.id}')" class="p-2 text-gray-400 hover:text-[#1a73e8] transition" title="Generate AI Questions">🤖</button>
+                                            <button onclick="showEditModal('interview', '${i.id}')" class="p-2 text-gray-400 hover:text-white transition">✏️</button>
+                                            <button onclick="deleteItem('interviews', '${i.id}')" class="p-2 text-gray-400 hover:text-red-500 transition">🗑️</button>
+                                        </div>
+                                    </div>
+                                    ${i.questions ? `
+                                        <div class="mt-4 pt-4 border-t border-[#222]">
+                                            <p class="text-[10px] font-bold text-gray-500 uppercase mb-2">Questions</p>
+                                            <p class="text-sm text-gray-400">${i.questions}</p>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function getInterviewStatusColor(status) {
+            const colors = {
+                'Confirmed': 'bg-green-600/20 text-green-400',
+                'Requested': 'bg-yellow-600/20 text-yellow-400',
+                'Completed': 'bg-blue-600/20 text-blue-400',
+                'Cancelled': 'bg-red-600/20 text-red-400'
+            };
+            return colors[status] || 'bg-gray-600/20 text-gray-400';
+        }
+
+        async function generateQuestions(interviewId) {
+            const interview = state.interviews.find(i => i.id === interviewId);
+            if (!interview) return;
+
+            showAIModal();
+            document.getElementById('ai-modal-content').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="w-8 h-8 border-2 border-[#1a73e8] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p class="text-gray-500">Generating interview questions...</p>
+                </div>
+            `;
+
+            try {
+                const data = await api('/api/ai/interview-questions', 'POST', {
+                    subject: interview.subject,
+                    role: interview.role
+                });
+
+                document.getElementById('ai-modal-content').innerHTML = `
+                    <div class="markdown-content">${marked.parse(data.result || '')}</div>
+                    <button onclick="closeAIModal()" class="w-full mt-6 bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-lg transition">
+                        Close
+                    </button>
+                `;
+            } catch (error) {
+                document.getElementById('ai-modal-content').innerHTML = `
+                    <div class="text-red-400">Error: ${error.message}</div>
+                `;
+            }
+        }
+
+        // =============================================================================
+        // PRODUCTION (Shots)
+        // =============================================================================
+        function renderProduction(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 06: Production</h2>
+                            <p class="text-gray-500">Shot Planning & Location Scouting.</p>
+                        </div>
+                        <button onclick="showAddModal('shot')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                            + Add Shot
+                        </button>
+                    </div>
+
+                    ${state.shots.length === 0 ? `
+                        <div class="text-center py-16">
+                            <div class="text-4xl mb-4">🎥</div>
+                            <p class="text-gray-500">No shots planned yet. Start planning your production shots.</p>
+                        </div>
+                    ` : `
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="border-b border-[#222] text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                                        <th class="p-4">Description</th>
+                                        <th class="p-4">Location</th>
+                                        <th class="p-4">Equipment</th>
+                                        <th class="p-4">Date</th>
+                                        <th class="p-4">Status</th>
+                                        <th class="p-4 w-24">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${state.shots.map(s => `
+                                        <tr class="border-b border-[#222] hover:bg-white/5 transition">
+                                            <td class="p-4 text-white">${s.description}</td>
+                                            <td class="p-4 text-gray-400">${s.location || '-'}</td>
+                                            <td class="p-4 text-gray-400 text-sm">${s.equipment || '-'}</td>
+                                            <td class="p-4 text-gray-400 text-sm">${s.shootDate || '-'}</td>
+                                            <td class="p-4">
+                                                <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${getStatusColor(s.status)}">
+                                                    ${s.status || 'Pending'}
+                                                </span>
+                                            </td>
+                                            <td class="p-4">
+                                                <button onclick="showEditModal('shot', '${s.id}')" class="p-1 text-gray-400 hover:text-white transition">✏️</button>
+                                                <button onclick="deleteItem('shots', '${s.id}')" class="p-1 text-gray-400 hover:text-red-500 transition">🗑️</button>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        // =============================================================================
+        // EPISODE WORKSPACE
+        // =============================================================================
+        function renderEpisodeWorkspace(container) {
+            const episode = state.episodes.find(e => e.id === state.selectedEpisode);
+            if (!episode) {
+                container.innerHTML = '<div class="text-center py-16 text-gray-500">No episode selected</div>';
+                return;
+            }
+
+            const workspace = state.episodeWorkspace;
+            const workflow = workspace.workflow || {};
+            const tabs = [
+                { id: 'research', label: 'Research', icon: '🔬', count: workspace.researchDocs.length },
+                { id: 'archive', label: 'Archive', icon: '📼', count: workspace.archiveLogs.length },
+                { id: 'script', label: 'Script', icon: '📝', count: workspace.scriptVersions.length },
+                { id: 'compliance', label: 'Compliance', icon: '✅', count: workspace.complianceItems.length }
+            ];
+
+            container.innerHTML = `
+                <div class="max-w-7xl mx-auto fade-in">
+                    <!-- Header -->
+                    <div class="flex items-center gap-4 mb-6">
+                        <button onclick="setPhase('episodes')" class="text-gray-400 hover:text-white transition">
+                            ← Back
+                        </button>
+                        <div class="flex-1">
+                            <h2 class="text-2xl font-bold text-white">${episode.title}</h2>
+                            <p class="text-gray-500 text-sm">${episode.description || 'No description'}</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">${WORKFLOW_PHASES[workflow.currentPhase]?.icon || '🎬'}</span>
+                            <span class="text-sm text-gray-400">${WORKFLOW_PHASES[workflow.currentPhase]?.name || 'Research'}</span>
+                        </div>
+                    </div>
+
+                    <!-- Workflow Progress -->
+                    <div class="bg-[#151515] border border-[#222] rounded-xl p-4 mb-6">
+                        <div class="flex justify-between items-center">
+                            ${Object.entries(WORKFLOW_PHASES).map(([key, phase]) => {
+                                const phaseData = workflow.phases?.[key] || {};
+                                const isCurrent = workflow.currentPhase === key;
+                                const isCompleted = phaseData.status === 'approved';
+                                const isReview = phaseData.status === 'review';
+                                return `
+                                    <div onclick="showPhaseUpdateModal('${key}')"
+                                        class="flex-1 text-center cursor-pointer hover:bg-[#1a1a1a] rounded-lg p-2 transition ${isCurrent ? 'opacity-100' : 'opacity-50'}">
+                                        <div class="text-xl mb-1 ${isCompleted ? 'text-green-400' : isReview ? 'text-yellow-400' : ''}">${phase.icon}</div>
+                                        <div class="text-xs ${isCurrent ? 'text-white font-bold' : 'text-gray-500'}">${phase.name}</div>
+                                        ${isCompleted ? '<div class="text-[10px] text-green-400">✓</div>' : ''}
+                                        ${isReview ? '<div class="text-[10px] text-yellow-400">Review</div>' : ''}
+                                    </div>
+                                    ${phase.order < 5 ? '<div class="text-gray-600">→</div>' : ''}
+                                `;
+                            }).join('')}
+                        </div>
+                        <p class="text-center text-[10px] text-gray-600 mt-2">Click a phase to update its status</p>
+                    </div>
+
+                    <!-- Tabs -->
+                    <div class="flex gap-2 mb-6 border-b border-[#222] pb-4">
+                        ${tabs.map(tab => `
+                            <button onclick="setWorkspaceTab('${tab.id}')"
+                                class="px-4 py-2 rounded-lg transition ${workspace.activeTab === tab.id
+                                    ? 'bg-[#1a73e8] text-white'
+                                    : 'bg-[#1a1a1a] text-gray-400 hover:text-white'}">
+                                ${tab.icon} ${tab.label}
+                                <span class="ml-1 text-xs opacity-60">(${tab.count})</span>
+                            </button>
+                        `).join('')}
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div id="workspace-tab-content">
+                        ${renderWorkspaceTabContent(workspace)}
+                    </div>
+                </div>
+            `;
+        }
+
+        function setWorkspaceTab(tabId) {
+            state.episodeWorkspace.activeTab = tabId;
+            const content = document.getElementById('workspace-tab-content');
+            if (content) {
+                content.innerHTML = renderWorkspaceTabContent(state.episodeWorkspace);
+            }
+        }
+
+        function renderWorkspaceTabContent(workspace) {
+            switch (workspace.activeTab) {
+                case 'research':
+                    return renderWorkspaceResearch(workspace);
+                case 'archive':
+                    return renderWorkspaceArchive(workspace);
+                case 'script':
+                    return renderWorkspaceScript(workspace);
+                case 'compliance':
+                    return renderWorkspaceCompliance(workspace);
+                default:
+                    return '';
+            }
+        }
+
+        function renderWorkspaceResearch(workspace) {
+            return `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-white">Research Documents</h3>
+                        <div class="flex gap-2">
+                            <button onclick="runResearchAgent()" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-4 py-2 rounded-lg transition text-sm">
+                                🤖 AI Research
+                            </button>
+                            <button onclick="showUploadResearchModal()" class="bg-[#1a1a1a] border border-[#333] hover:border-[#1a73e8] text-white px-4 py-2 rounded-lg transition text-sm">
+                                📁 Upload File
+                            </button>
+                            <button onclick="showAddResearchDoc()" class="bg-[#1a1a1a] border border-[#333] hover:border-[#1a73e8] text-white px-4 py-2 rounded-lg transition text-sm">
+                                + Add Note
+                            </button>
+                        </div>
+                    </div>
+
+                    ${workspace.researchDocs.length === 0 ? `
+                        <div class="text-center py-12 bg-[#151515] rounded-xl border border-[#222]">
+                            <div class="text-4xl mb-4">🔬</div>
+                            <p class="text-gray-500">No research documents yet</p>
+                            <p class="text-sm text-gray-600 mt-2">Upload files, add notes, or run AI research</p>
+                        </div>
+                    ` : `
+                        <div class="grid gap-3">
+                            ${workspace.researchDocs.map(doc => `
+                                <div class="bg-[#151515] border border-[#222] rounded-lg p-4 hover:border-[#333] transition cursor-pointer"
+                                     onclick="viewResearchDoc('${doc.id}')">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                ${doc.hasFile ? `<span class="text-lg">${
+                                                    doc.fileCategory === 'video' ? '🎬' :
+                                                    doc.fileCategory === 'audio' ? '🎵' :
+                                                    doc.fileCategory === 'image' ? '🖼️' : '📄'
+                                                }</span>` : ''}
+                                                <span class="text-xs px-2 py-0.5 rounded ${
+                                                    doc.documentType === 'agent_output' ? 'bg-blue-500/20 text-blue-400' :
+                                                    doc.documentType === 'fact_check' ? 'bg-green-500/20 text-green-400' :
+                                                    doc.documentType === 'notebooklm' ? 'bg-purple-500/20 text-purple-400' :
+                                                    'bg-gray-500/20 text-gray-400'
+                                                }">${doc.documentType || 'uploaded'}</span>
+                                                ${doc.hasFile ? `<span class="text-xs text-gray-500">${formatFileSize(doc.sizeBytes)}</span>` : ''}
+                                            </div>
+                                            <h4 class="font-medium text-white mt-2">${doc.title || 'Untitled'}</h4>
+                                            <p class="text-sm text-gray-500 mt-1 line-clamp-2">${doc.content?.substring(0, 200) || ''}${doc.content?.length > 200 ? '...' : ''}</p>
+                                            ${doc.filename ? `<p class="text-xs text-gray-600 mt-1">📎 ${doc.filename}</p>` : ''}
+                                        </div>
+                                        <div class="flex flex-col items-end gap-2">
+                                            <span class="text-xs px-2 py-0.5 rounded ${
+                                                doc.confidenceLevel === 'verified' ? 'bg-green-500/20 text-green-400' :
+                                                doc.confidenceLevel === 'probable' ? 'bg-yellow-500/20 text-yellow-400' :
+                                                'bg-red-500/20 text-red-400'
+                                            }">${doc.confidenceLevel || 'unverified'}</span>
+                                            ${doc.hasFile && doc.gcsPath ? `
+                                                <a href="/api/download/${doc.gcsPath}"
+                                                   onclick="event.stopPropagation();"
+                                                   class="text-xs bg-[#1a1a1a] border border-[#333] px-2 py-1 rounded hover:border-[#1a73e8] transition">
+                                                    Download
+                                                </a>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function renderWorkspaceArchive(workspace) {
+            const totalClips = workspace.archiveLogs.reduce((sum, log) => sum + (log.clipCount || 0), 0);
+
+            return `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-white">Archive Logs (${totalClips} clips)</h3>
+                        <div class="flex gap-2">
+                            <button onclick="showUploadArchiveModal()" class="bg-[#1a1a1a] border border-[#333] hover:border-purple-600 text-white px-4 py-2 rounded-lg transition text-sm">
+                                📁 Upload Files
+                            </button>
+                            <button onclick="showImportArchiveModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition text-sm">
+                                📥 Import CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    ${workspace.archiveLogs.length === 0 ? `
+                        <div class="text-center py-12 bg-[#151515] rounded-xl border border-[#222]">
+                            <div class="text-4xl mb-4">📼</div>
+                            <p class="text-gray-500">No archive files uploaded</p>
+                            <p class="text-sm text-gray-600 mt-2">Upload documents, video, or audio files, or import from Quickture CSV</p>
+                        </div>
+                    ` : `
+                        <div class="space-y-3">
+                            ${workspace.archiveLogs.map(log => `
+                                <div class="bg-[#151515] border border-[#222] rounded-lg p-4 hover:border-[#333] transition">
+                                    <div class="flex justify-between items-center mb-3">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-lg">${
+                                                log.fileCategory === 'video' ? '🎬' :
+                                                log.fileCategory === 'audio' ? '🎵' :
+                                                log.fileCategory === 'image' ? '🖼️' :
+                                                log.source === 'quickture' ? '📼' :
+                                                '📄'
+                                            }</span>
+                                            <span class="text-xs px-2 py-0.5 rounded ${
+                                                log.source === 'upload' ? 'bg-blue-500/20 text-blue-400' :
+                                                log.source === 'quickture' ? 'bg-purple-500/20 text-purple-400' :
+                                                log.source === 'nasa' ? 'bg-red-500/20 text-red-400' :
+                                                log.source === 'getty' ? 'bg-orange-500/20 text-orange-400' :
+                                                'bg-gray-500/20 text-gray-400'
+                                            }">${log.source || 'manual'}</span>
+                                            ${log.hasFile ? `<span class="text-xs text-gray-500">${formatFileSize(log.sizeBytes)}</span>` : ''}
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xs text-gray-500">${log.clipCount || 0} clips</span>
+                                            ${log.hasFile && log.gcsPath ? `
+                                                <button onclick="viewArchiveFile('${log.id}')" class="text-xs bg-[#1a1a1a] border border-[#333] px-2 py-1 rounded hover:border-purple-600 transition">
+                                                    View
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                    ${log.sourceName ? `<p class="text-sm font-medium text-white mb-2">${log.sourceName}</p>` : ''}
+                                    ${log.clips?.slice(0, 5).map(clip => `
+                                        <div class="text-sm py-2 border-t border-[#222] first:border-0">
+                                            <span class="text-gray-400">${clip.timecodeIn || ''}</span>
+                                            <span class="text-white ml-2">${clip.description || clip.filename}</span>
+                                            ${clip.keywords?.length > 0 ? `
+                                                <div class="mt-1">
+                                                    ${clip.keywords.slice(0, 3).map(k => `<span class="text-[10px] bg-[#222] text-gray-400 px-1.5 py-0.5 rounded mr-1">${k}</span>`).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    `).join('')}
+                                    ${(log.clips?.length || 0) > 5 ? `<p class="text-xs text-gray-500 mt-2">+ ${log.clips.length - 5} more clips</p>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function renderWorkspaceScript(workspace) {
+            const currentVersion = workspace.scriptVersions[workspace.scriptVersions.length - 1];
+
+            return `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-white">Script Workspace</h3>
+                        <div class="flex gap-2">
+                            <button onclick="runScriptSwarm()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition text-sm">
+                                🤖 Generate Script
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Version History -->
+                    ${workspace.scriptVersions.length > 0 ? `
+                        <div class="flex gap-2 flex-wrap">
+                            ${workspace.scriptVersions.map((v, i) => `
+                                <button onclick="viewScriptVersion('${v.id}')"
+                                    class="px-3 py-1 rounded text-sm ${
+                                        v.isLocked ? 'bg-green-600 text-white' :
+                                        i === workspace.scriptVersions.length - 1 ? 'bg-[#1a73e8] text-white' :
+                                        'bg-[#1a1a1a] text-gray-400'
+                                    }">
+                                    ${v.versionType || 'V' + v.versionNumber}
+                                    ${v.isLocked ? '🔒' : ''}
+                                </button>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+
+                    <!-- Current Script -->
+                    ${currentVersion ? `
+                        <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <h4 class="font-bold text-white">${currentVersion.versionType || 'Draft'}</h4>
+                                ${!currentVersion.isLocked ? `
+                                    <button onclick="lockScript('${currentVersion.id}')" class="text-xs bg-green-600/20 text-green-400 px-3 py-1 rounded hover:bg-green-600/30 transition">
+                                        Lock as Final
+                                    </button>
+                                ` : ''}
+                            </div>
+                            <div class="markdown-content max-h-96 overflow-y-auto">
+                                ${marked.parse(currentVersion.content || 'No content')}
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="text-center py-12 bg-[#151515] rounded-xl border border-[#222]">
+                            <div class="text-4xl mb-4">📝</div>
+                            <p class="text-gray-500">No script generated yet</p>
+                            <p class="text-sm text-gray-600 mt-2">Use AI Script Swarm to generate</p>
+                        </div>
+                    `}
+
+                    <!-- Agent Activity -->
+                    ${workspace.agentTasks.length > 0 ? `
+                        <div class="mt-6">
+                            <h4 class="text-sm font-bold text-gray-400 uppercase mb-3">Agent Activity</h4>
+                            <div class="space-y-2">
+                                ${workspace.agentTasks.slice(-5).map(task => `
+                                    <div class="flex items-center gap-3 p-2 bg-[#1a1a1a] rounded">
+                                        <span class="text-lg">${
+                                            task.agentType === 'research_specialist' ? '🔬' :
+                                            task.agentType === 'archive_specialist' ? '📼' :
+                                            task.agentType === 'interview_producer' ? '🎙️' :
+                                            task.agentType === 'script_writer' ? '📝' :
+                                            task.agentType === 'fact_checker' ? '✅' : '🤖'
+                                        }</span>
+                                        <div class="flex-1">
+                                            <p class="text-sm text-white">${task.agentInfo?.name || task.agentType}</p>
+                                            <p class="text-xs text-gray-500">${task.taskType}</p>
+                                        </div>
+                                        <span class="text-xs px-2 py-0.5 rounded ${
+                                            task.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                            task.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
+                                            task.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                            'bg-gray-500/20 text-gray-400'
+                                        }">${task.status}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function renderWorkspaceCompliance(workspace) {
+            const grouped = {
+                source_citation: workspace.complianceItems.filter(i => i.itemType === 'source_citation'),
+                archive_license: workspace.complianceItems.filter(i => i.itemType === 'archive_license'),
+                exif_metadata: workspace.complianceItems.filter(i => i.itemType === 'exif_metadata'),
+                legal_signoff: workspace.complianceItems.filter(i => i.itemType === 'legal_signoff')
+            };
+
+            return `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-white">Compliance Package</h3>
+                        <div class="flex gap-2">
+                            <button onclick="showAddComplianceItem()" class="bg-[#1a1a1a] border border-[#333] hover:border-red-600 text-white px-4 py-2 rounded-lg transition text-sm">
+                                + Add Item
+                            </button>
+                            <button onclick="exportCompliancePackage()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition text-sm">
+                                📄 Export Package
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        ${[
+                            { key: 'source_citation', label: 'Source Citations', icon: '📚' },
+                            { key: 'archive_license', label: 'Archive Licenses', icon: '📜' },
+                            { key: 'exif_metadata', label: 'EXIF Metadata', icon: '🏷️' },
+                            { key: 'legal_signoff', label: 'Legal Signoffs', icon: '⚖️' }
+                        ].map(cat => `
+                            <div class="bg-[#151515] border border-[#222] rounded-lg p-4 text-center">
+                                <div class="text-2xl mb-2">${cat.icon}</div>
+                                <p class="text-2xl font-bold text-white">${grouped[cat.key].length}</p>
+                                <p class="text-xs text-gray-500">${cat.label}</p>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    ${workspace.complianceItems.length > 0 ? `
+                        <div class="bg-[#151515] border border-[#222] rounded-xl p-4 mt-4">
+                            <h4 class="text-sm font-bold text-gray-400 uppercase mb-3">Recent Items</h4>
+                            <div class="space-y-2 max-h-64 overflow-y-auto">
+                                ${workspace.complianceItems.slice(0, 10).map(item => `
+                                    <div class="flex items-center justify-between p-2 bg-[#1a1a1a] rounded">
+                                        <div>
+                                            <p class="text-sm text-white">${item.title || item.claim || 'Untitled'}</p>
+                                            <p class="text-xs text-gray-500">${item.itemType}</p>
+                                        </div>
+                                        <span class="text-xs px-2 py-0.5 rounded ${
+                                            item.status === 'verified' ? 'bg-green-500/20 text-green-400' :
+                                            item.status === 'flagged' ? 'bg-red-500/20 text-red-400' :
+                                            'bg-yellow-500/20 text-yellow-400'
+                                        }">${item.status}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="text-center py-8 text-gray-500">
+                            <p>Compliance items will be auto-generated during script creation</p>
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        async function runResearchAgent() {
+            if (!state.selectedEpisode) return;
+
+            const episode = state.episodes.find(e => e.id === state.selectedEpisode);
+            if (!episode) return;
+
+            showModal('AI Research Agent', '<div class="text-center py-8"><div class="animate-spin text-4xl">🔬</div><p class="mt-4 text-gray-400">Running research agent...</p></div>');
+
+            try {
+                const result = await api('/api/ai/research-agent', 'POST', {
+                    episodeId: state.selectedEpisode,
+                    brief: episode.brief || { summary: episode.description }
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        async function runScriptSwarm() {
+            if (!state.selectedEpisode) return;
+
+            showModal('AI Script Swarm', `
+                <div class="text-center py-8">
+                    <div class="text-4xl mb-4">🤖</div>
+                    <p class="text-white font-bold mb-2">Launching Agent Swarm</p>
+                    <p class="text-gray-400 text-sm">5 specialized agents working together...</p>
+                    <div class="mt-6 space-y-2 text-left max-w-sm mx-auto">
+                        <div class="flex items-center gap-2 text-gray-500"><span>🔬</span> Research Specialist</div>
+                        <div class="flex items-center gap-2 text-gray-500"><span>📼</span> Archive Specialist</div>
+                        <div class="flex items-center gap-2 text-gray-500"><span>🎙️</span> Interview Producer</div>
+                        <div class="flex items-center gap-2 text-gray-500"><span>📝</span> Script Writer</div>
+                        <div class="flex items-center gap-2 text-gray-500"><span>✅</span> Fact Checker</div>
+                    </div>
+                </div>
+            `);
+
+            try {
+                const result = await api('/api/ai/script-swarm', 'POST', {
+                    episodeId: state.selectedEpisode
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        async function exportCompliancePackage() {
+            if (!state.selectedEpisode) return;
+
+            try {
+                const result = await api(`/api/episodes/${state.selectedEpisode}/compliance/export`);
+                showModal('Compliance Package', `
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-400">Export ready for: ${result.episodeTitle}</p>
+                        <div class="grid grid-cols-2 gap-4 text-center">
+                            <div class="bg-green-500/10 p-3 rounded"><span class="text-green-400 font-bold">${result.summary?.verified || 0}</span><br><span class="text-xs text-gray-500">Verified</span></div>
+                            <div class="bg-yellow-500/10 p-3 rounded"><span class="text-yellow-400 font-bold">${result.summary?.pending || 0}</span><br><span class="text-xs text-gray-500">Pending</span></div>
+                        </div>
+                        <pre class="bg-[#111] p-4 rounded text-xs overflow-auto max-h-64">${JSON.stringify(result, null, 2)}</pre>
+                    </div>
+                `);
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        // =============================================================================
+        // COMPLIANCE (Global)
+        // =============================================================================
+        function renderCompliance(container) {
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-black uppercase italic tracking-tighter">Compliance Dashboard</h2>
+                        <p class="text-gray-500">Audit trail and legal compliance tracking.</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Episodes Compliance Status -->
+                        <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                            <h3 class="text-lg font-bold text-white mb-4">Episodes Compliance</h3>
+                            <div class="space-y-3">
+                                ${state.episodes.slice(0, 10).map(ep => `
+                                    <div class="flex items-center justify-between p-3 bg-[#1a1a1a] rounded-lg">
+                                        <span class="text-white">${ep.title}</span>
+                                        <button onclick="openEpisodeWorkspace('${ep.id}'); setTimeout(() => setWorkspaceTab('compliance'), 100);"
+                                            class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                            View
+                                        </button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <!-- Quick Export -->
+                        <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                            <h3 class="text-lg font-bold text-white mb-4">Export Options</h3>
+                            <div class="space-y-3">
+                                <button class="w-full p-4 bg-[#1a1a1a] rounded-lg text-left hover:bg-[#222] transition">
+                                    <div class="font-bold text-white">Full Audit Trail</div>
+                                    <p class="text-xs text-gray-500 mt-1">PDF + XML export of all compliance data</p>
+                                </button>
+                                <button class="w-full p-4 bg-[#1a1a1a] rounded-lg text-left hover:bg-[#222] transition">
+                                    <div class="font-bold text-white">AI Fingerprints</div>
+                                    <p class="text-xs text-gray-500 mt-1">EXIF metadata for all AI-generated content</p>
+                                </button>
+                                <button class="w-full p-4 bg-[#1a1a1a] rounded-lg text-left hover:bg-[#222] transition">
+                                    <div class="font-bold text-white">Source Citations</div>
+                                    <p class="text-xs text-gray-500 mt-1">Complete source citation log</p>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // =============================================================================
+        // REVIEW
+        // =============================================================================
+        function renderReview(container) {
+            const stats = {
+                episodes: state.episodes.length,
+                research: state.research.length,
+                interviews: state.interviews.length,
+                scripts: state.scripts.length,
+                shots: state.shots.length,
+                assets: state.assets.length
+            };
+
+            container.innerHTML = `
+                <div class="max-w-6xl mx-auto fade-in">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-black uppercase italic tracking-tighter">PHASE 07: Review</h2>
+                        <p class="text-gray-500">Final Review & Export.</p>
+                    </div>
+
+                    <div class="bg-[#151515] border border-[#222] rounded-xl p-6 mb-8">
+                        <h3 class="text-xl font-bold text-white mb-6">Project Summary</h3>
+
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                            ${Object.entries(stats).map(([key, value]) => `
+                                <div class="bg-[#1a1a1a] rounded-lg p-4 text-center">
+                                    <p class="text-3xl font-black text-white">${value}</p>
+                                    <p class="text-[10px] text-gray-500 uppercase tracking-wider mt-1">${key}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="bg-[#151515] border border-[#222] rounded-xl p-6">
+                        <h3 class="text-xl font-bold text-white mb-4">Checklist</h3>
+                        <div class="space-y-3">
+                            ${renderCheckItem('Episodes defined', stats.episodes > 0)}
+                            ${renderCheckItem('Research completed', stats.research >= 2)}
+                            ${renderCheckItem('Interviews scheduled', stats.interviews > 0)}
+                            ${renderCheckItem('Scripts written', stats.scripts > 0)}
+                            ${renderCheckItem('Shots planned', stats.shots > 0)}
+                            ${renderCheckItem('Assets organized', stats.assets > 0)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCheckItem(label, completed) {
+            return `
+                <div class="flex items-center gap-3">
+                    <span class="w-6 h-6 rounded-full flex items-center justify-center ${completed ? 'bg-green-600' : 'bg-[#222]'}">
+                        ${completed ? '✓' : ''}
+                    </span>
+                    <span class="${completed ? 'text-white' : 'text-gray-500'}">${label}</span>
+                </div>
+            `;
+        }
+
+        // =============================================================================
+        // MODALS
+        // =============================================================================
+        function showModal(title, content) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-body').innerHTML = content;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.add('hidden');
+        }
+
+        function showAIModal() {
+            document.getElementById('ai-modal').classList.remove('hidden');
+        }
+
+        function closeAIModal() {
+            document.getElementById('ai-modal').classList.add('hidden');
+        }
+
+        function showProjectsModal() {
+            const container = document.getElementById('projects-modal-body');
+            container.innerHTML = `
+                <div class="space-y-3 mb-6">
+                    ${state.projects.map(p => `
+                        <button onclick="selectProject('${p.id}'); closeProjectsModal();"
+                            class="w-full text-left p-4 rounded-lg border transition ${p.id === state.selectedProject ? 'bg-red-600/20 border-red-600' : 'bg-[#111] border-[#222] hover:border-red-600/50'}">
+                            <h4 class="font-bold text-white">${p.title}</h4>
+                            <p class="text-sm text-gray-500 truncate">${p.description || 'No description'}</p>
+                        </button>
+                    `).join('')}
+                </div>
+                <button onclick="showNewProjectModal()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg transition">
+                    + Create New Project
+                </button>
+            `;
+            document.getElementById('projects-modal').classList.remove('hidden');
+        }
+
+        function closeProjectsModal() {
+            document.getElementById('projects-modal').classList.add('hidden');
+        }
+
+        // =============================================================================
+        // SERIES MANAGEMENT
+        // =============================================================================
+        function showNewSeriesModal() {
+            showModal('Create New Series', `
+                <form onsubmit="createSeries(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Series Title</label>
+                            <input type="text" id="new-series-title" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="e.g., The NASA Files">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Description</label>
+                            <textarea id="new-series-description" rows="2"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Brief series description"></textarea>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Episode Count</label>
+                                <input type="number" id="new-series-episode-count" value="30" min="1" max="100"
+                                    class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Episode Duration</label>
+                                <input type="text" id="new-series-duration" value="45 minutes"
+                                    class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Delivery Format</label>
+                            <select id="new-series-format"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="Broadcast HD + streaming">Broadcast HD + streaming</option>
+                                <option value="Streaming only">Streaming only</option>
+                                <option value="Broadcast HD">Broadcast HD</option>
+                                <option value="4K HDR">4K HDR</option>
+                            </select>
+                        </div>
+                        <div class="pt-4 border-t border-[#222]">
+                            <label class="flex items-center gap-3 cursor-pointer">
+                                <input type="checkbox" id="new-series-bulk-create" checked
+                                    class="w-5 h-5 rounded bg-[#0a0a0a] border-[#333] text-[#1a73e8] focus:ring-[#1a73e8]">
+                                <span class="text-sm text-gray-400">Auto-create episode placeholders</span>
+                            </label>
+                        </div>
+                        <button type="submit" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            Create Series
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function createSeries(event) {
+            event.preventDefault();
+
+            const title = document.getElementById('new-series-title').value;
+            const episodeCount = parseInt(document.getElementById('new-series-episode-count').value);
+            const bulkCreate = document.getElementById('new-series-bulk-create').checked;
+
+            // Create series
+            const series = await api('/api/series', 'POST', {
+                projectId: state.selectedProject,
+                title: title,
+                description: document.getElementById('new-series-description').value,
+                episodeCount: episodeCount,
+                episodeDuration: document.getElementById('new-series-duration').value,
+                deliveryFormat: document.getElementById('new-series-format').value,
+                knowledgeBase: {
+                    seriesBible: null,
+                    brandGuidelines: null,
+                    editorialTone: null,
+                    archiveCredentials: [],
+                    complianceChecklist: null,
+                    researchDocuments: []
+                }
+            });
+
+            // Bulk create episodes if checked
+            if (bulkCreate && episodeCount > 0) {
+                const episodes = [];
+                for (let i = 1; i <= episodeCount; i++) {
+                    episodes.push({
+                        title: `Episode ${i}`,
+                        description: `${title} - Episode ${i}`,
+                        status: 'Planning',
+                        duration: document.getElementById('new-series-duration').value
+                    });
+                }
+
+                await api(`/api/series/${series.id}/episodes/bulk-create`, 'POST', {
+                    projectId: state.selectedProject,
+                    episodes: episodes
+                });
+            }
+
+            await loadProjectData();
+            closeModal();
+            render();
+        }
+
+        function showSeriesKnowledgeBase(seriesId) {
+            const series = state.series.find(s => s.id === seriesId);
+            if (!series) return;
+
+            const kb = series.knowledgeBase || {};
+
+            showModal(`${series.title} - Knowledge Base`, `
+                <div class="space-y-4">
+                    <p class="text-sm text-gray-500">Upload series-level documents that apply to all episodes.</p>
+
+                    <div class="grid gap-3">
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Series Bible</h4>
+                                    <p class="text-xs text-gray-500">Format document, tone guide</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'seriesBible')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.seriesBible ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Brand Guidelines</h4>
+                                    <p class="text-xs text-gray-500">Visual identity, graphics standards</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'brandGuidelines')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.brandGuidelines ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Editorial Tone Guide</h4>
+                                    <p class="text-xs text-gray-500">Writing style, voice guidelines</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'editorialTone')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.editorialTone ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Compliance Checklist</h4>
+                                    <p class="text-xs text-gray-500">Legal requirements, standards</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'complianceChecklist')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.complianceChecklist ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="closeModal()" class="w-full mt-4 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg transition">
+                        Close
+                    </button>
+                </div>
+            `);
+        }
+
+        // =============================================================================
+        // ARCHIVE FILE UPLOAD
+        // =============================================================================
+        function formatFileSize(bytes) {
+            if (!bytes) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        function showUploadArchiveModal() {
+            if (!state.selectedEpisode) {
+                showModal('Error', '<p class="text-red-400">Please select an episode first</p>');
+                return;
+            }
+
+            showModal('Upload Archive Files', `
+                <form id="archive-upload-form" onsubmit="uploadArchiveFile(event)">
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-500">Upload documents, video, audio, or image files to the archive.</p>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">File</label>
+                            <input type="file" id="archive-file" required
+                                accept="video/*,audio/*,image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.xls"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:bg-purple-600 file:text-white hover:file:bg-purple-700">
+                            <p class="text-xs text-gray-600 mt-1">Supported: Video (MP4, MOV, MXF), Audio (MP3, WAV), Images (JPG, PNG), Documents (PDF, DOC)</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source Type</label>
+                            <select id="archive-source-type"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition">
+                                <option value="upload">Direct Upload</option>
+                                <option value="nasa">NASA Archive</option>
+                                <option value="getty">Getty Images</option>
+                                <option value="pond5">Pond5</option>
+                                <option value="interview">Interview Recording</option>
+                                <option value="b-roll">B-Roll Footage</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Description</label>
+                            <textarea id="archive-description" rows="2"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition"
+                                placeholder="Brief description of the content..."></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Keywords (comma-separated)</label>
+                            <input type="text" id="archive-keywords"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition"
+                                placeholder="e.g., apollo, launch, nasa, 1969">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Technical Notes</label>
+                            <input type="text" id="archive-technical-notes"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition"
+                                placeholder="e.g., 4K, 24fps, ProRes 422">
+                        </div>
+
+                        <div id="upload-progress" class="hidden">
+                            <div class="bg-[#222] rounded-full h-2 overflow-hidden">
+                                <div id="upload-progress-bar" class="bg-purple-600 h-full transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                            <p id="upload-status" class="text-xs text-gray-500 mt-1 text-center">Uploading...</p>
+                        </div>
+
+                        <button type="submit" id="upload-submit-btn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition">
+                            📁 Upload to Archive
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function uploadArchiveFile(event) {
+            event.preventDefault();
+
+            const fileInput = document.getElementById('archive-file');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const progressDiv = document.getElementById('upload-progress');
+            const progressBar = document.getElementById('upload-progress-bar');
+            const statusText = document.getElementById('upload-status');
+            const submitBtn = document.getElementById('upload-submit-btn');
+
+            // Show progress
+            progressDiv.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('episodeId', state.selectedEpisode);
+            formData.append('projectId', state.selectedProject);
+            formData.append('sourceType', document.getElementById('archive-source-type').value);
+            formData.append('description', document.getElementById('archive-description').value);
+            formData.append('keywords', document.getElementById('archive-keywords').value);
+            formData.append('technicalNotes', document.getElementById('archive-technical-notes').value);
+
+            try {
+                // Use XMLHttpRequest for progress tracking
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        statusText.textContent = `Uploading... ${percent}% (${formatFileSize(e.loaded)} / ${formatFileSize(e.total)})`;
+                    }
+                });
+
+                xhr.addEventListener('load', async () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        const result = JSON.parse(xhr.responseText);
+                        await loadEpisodeWorkspace(state.selectedEpisode);
+                        closeModal();
+                        showModal('Upload Complete', `
+                            <div class="text-center py-4">
+                                <div class="text-4xl mb-4">${
+                                    result.category === 'video' ? '🎬' :
+                                    result.category === 'audio' ? '🎵' :
+                                    result.category === 'image' ? '🖼️' : '📄'
+                                }</div>
+                                <p class="text-white font-bold">${result.filename}</p>
+                                <p class="text-sm text-gray-500 mt-2">${formatFileSize(result.size)} uploaded successfully</p>
+                            </div>
+                        `);
+                        setTimeout(() => { closeModal(); render(); }, 2000);
+                    } else {
+                        const error = JSON.parse(xhr.responseText);
+                        throw new Error(error.error || 'Upload failed');
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    throw new Error('Network error during upload');
+                });
+
+                xhr.open('POST', '/api/archive-logs/upload');
+                xhr.send(formData);
+
+            } catch (error) {
+                progressDiv.classList.add('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '📁 Upload to Archive';
+                showModal('Upload Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        async function viewArchiveFile(logId) {
+            const log = state.episodeWorkspace?.archiveLogs?.find(l => l.id === logId);
+            if (!log) return;
+
+            showModal(log.sourceName || log.filename || 'Archive File', `
+                <div class="space-y-4">
+                    <div class="flex items-center gap-3">
+                        <span class="text-3xl">${
+                            log.fileCategory === 'video' ? '🎬' :
+                            log.fileCategory === 'audio' ? '🎵' :
+                            log.fileCategory === 'image' ? '🖼️' : '📄'
+                        }</span>
+                        <div>
+                            <p class="font-bold text-white">${log.filename || log.sourceName}</p>
+                            <p class="text-xs text-gray-500">${log.mimeType} • ${formatFileSize(log.sizeBytes)}</p>
+                        </div>
+                    </div>
+
+                    ${log.clips?.[0]?.description ? `
+                        <div class="bg-[#0a0a0a] rounded-lg p-4">
+                            <p class="text-xs text-gray-500 uppercase mb-1">Description</p>
+                            <p class="text-white">${log.clips[0].description}</p>
+                        </div>
+                    ` : ''}
+
+                    ${log.clips?.[0]?.keywords?.length > 0 ? `
+                        <div>
+                            <p class="text-xs text-gray-500 uppercase mb-2">Keywords</p>
+                            <div class="flex flex-wrap gap-1">
+                                ${log.clips[0].keywords.map(k => `<span class="text-xs bg-[#222] text-gray-300 px-2 py-1 rounded">${k}</span>`).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${log.clips?.[0]?.technicalNotes ? `
+                        <div class="bg-[#0a0a0a] rounded-lg p-4">
+                            <p class="text-xs text-gray-500 uppercase mb-1">Technical Notes</p>
+                            <p class="text-white font-mono text-sm">${log.clips[0].technicalNotes}</p>
+                        </div>
+                    ` : ''}
+
+                    <div class="text-xs text-gray-500">
+                        <p>Uploaded: ${log.uploadedAt ? new Date(log.uploadedAt).toLocaleString() : 'Unknown'}</p>
+                        <p>Source: ${log.source}</p>
+                    </div>
+
+                    ${log.gcsPath ? `
+                        <a href="/api/download/${log.gcsPath}"
+                            target="_blank"
+                            class="block w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition text-center">
+                            📥 Download File
+                        </a>
+                    ` : ''}
+                </div>
+            `);
+        }
+
+        // =============================================================================
+        // ARCHIVE IMPORT
+        // =============================================================================
+        function showImportArchiveModal() {
+            if (!state.selectedEpisode) {
+                showModal('Error', '<p class="text-red-400">Please select an episode first</p>');
+                return;
+            }
+
+            showModal('Import Archive Log', `
+                <form onsubmit="importArchiveCSV(event)">
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-500">Import archive footage log from Quickture CSV export.</p>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source</label>
+                            <select id="import-source"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition">
+                                <option value="quickture">Quickture Export</option>
+                                <option value="getty">Getty Images</option>
+                                <option value="nasa_api">NASA API</option>
+                                <option value="pond5">Pond5</option>
+                                <option value="manual">Manual Entry</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">CSV Content</label>
+                            <textarea id="import-csv-content" rows="8" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white font-mono text-xs focus:outline-none focus:border-purple-600 transition"
+                                placeholder="Filename,Timecode_In,Timecode_Out,Description,Keywords,Technical_Notes,Getty_ID
+clip001.mov,00:00:00,00:00:30,Apollo launch sequence,rocket;launch;nasa,4K scan,"></textarea>
+                        </div>
+
+                        <div class="text-xs text-gray-500">
+                            <p class="font-bold mb-1">Expected columns:</p>
+                            <p>Filename, Timecode_In, Timecode_Out, Description, Keywords, Technical_Notes, Getty_ID, NASA_ID</p>
+                        </div>
+
+                        <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition">
+                            📥 Import Archive Log
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function importArchiveCSV(event) {
+            event.preventDefault();
+
+            const csvContent = document.getElementById('import-csv-content').value;
+            const source = document.getElementById('import-source').value;
+
+            try {
+                const result = await api('/api/archive-logs/import-csv', 'POST', {
+                    episodeId: state.selectedEpisode,
+                    csvContent: csvContent,
+                    source: source
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                showModal('Import Complete', `
+                    <div class="text-center py-4">
+                        <div class="text-4xl mb-4">✅</div>
+                        <p class="text-white font-bold">Successfully imported ${result.clipCount || 0} clips</p>
+                        <p class="text-sm text-gray-500 mt-2">Source: ${source}</p>
+                    </div>
+                `);
+                setTimeout(() => { closeModal(); render(); }, 2000);
+            } catch (error) {
+                showModal('Import Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        // =============================================================================
+        // RESEARCH DOCUMENT UPLOAD
+        // =============================================================================
+        function showAddResearchDoc() {
+            if (!state.selectedEpisode) return;
+
+            showModal('Add Research Document', `
+                <form onsubmit="createResearchDoc(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Title</label>
+                            <input type="text" id="research-doc-title" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Document title">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Document Type</label>
+                            <select id="research-doc-type"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="uploaded">Uploaded Document</option>
+                                <option value="fact_check">Fact Check Source</option>
+                                <option value="notebooklm">NotebookLM Export</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Confidence Level</label>
+                            <select id="research-doc-confidence"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="verified">Verified</option>
+                                <option value="probable">Probable</option>
+                                <option value="requires_confirmation" selected>Requires Confirmation</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Content</label>
+                            <textarea id="research-doc-content" rows="6" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Document content, notes, or key points..."></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source URL (optional)</label>
+                            <input type="url" id="research-doc-url"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="https://...">
+                        </div>
+                        <button type="submit" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            Add Document
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function createResearchDoc(event) {
+            event.preventDefault();
+
+            try {
+                await api('/api/research-documents', 'POST', {
+                    episodeId: state.selectedEpisode,
+                    title: document.getElementById('research-doc-title').value,
+                    content: document.getElementById('research-doc-content').value,
+                    documentType: document.getElementById('research-doc-type').value,
+                    confidenceLevel: document.getElementById('research-doc-confidence').value,
+                    sourceUrl: document.getElementById('research-doc-url').value || null
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function showUploadResearchModal() {
+            if (!state.selectedEpisode) {
+                showModal('Error', '<p class="text-red-400">Please select an episode first</p>');
+                return;
+            }
+
+            showModal('Upload Research Document', `
+                <form id="research-upload-form" onsubmit="uploadResearchFile(event)">
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-500">Upload PDFs, documents, images, or other research files.</p>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">File</label>
+                            <input type="file" id="research-file" required
+                                accept=".pdf,.doc,.docx,.txt,.rtf,.md,.jpg,.jpeg,.png,.gif,.mp3,.wav,.mp4,.mov"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:bg-[#1a73e8] file:text-white hover:file:bg-[#1557b0]">
+                            <p class="text-xs text-gray-600 mt-1">Supported: PDF, DOC, TXT, Images, Audio, Video</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Title</label>
+                            <input type="text" id="research-upload-title"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Document title (defaults to filename)">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Document Type</label>
+                            <select id="research-upload-type"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="uploaded">Uploaded Document</option>
+                                <option value="fact_check">Fact Check Source</option>
+                                <option value="notebooklm">NotebookLM Export</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Confidence Level</label>
+                            <select id="research-upload-confidence"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="verified">Verified</option>
+                                <option value="probable">Probable</option>
+                                <option value="requires_confirmation" selected>Requires Confirmation</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Notes (optional)</label>
+                            <textarea id="research-upload-content" rows="3"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Additional notes about this document..."></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source URL (optional)</label>
+                            <input type="url" id="research-upload-url"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="https://...">
+                        </div>
+
+                        <div id="research-upload-progress" class="hidden">
+                            <div class="bg-[#222] rounded-full h-2 overflow-hidden">
+                                <div id="research-upload-progress-bar" class="bg-[#1a73e8] h-full transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                            <p id="research-upload-status" class="text-xs text-gray-500 mt-1 text-center">Uploading...</p>
+                        </div>
+
+                        <button type="submit" id="research-upload-submit-btn" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            📁 Upload Research Document
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function uploadResearchFile(event) {
+            event.preventDefault();
+
+            const fileInput = document.getElementById('research-file');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const progressDiv = document.getElementById('research-upload-progress');
+            const progressBar = document.getElementById('research-upload-progress-bar');
+            const statusText = document.getElementById('research-upload-status');
+            const submitBtn = document.getElementById('research-upload-submit-btn');
+
+            // Show progress
+            progressDiv.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('episodeId', state.selectedEpisode);
+            formData.append('projectId', state.selectedProject);
+            formData.append('title', document.getElementById('research-upload-title').value || file.name);
+            formData.append('documentType', document.getElementById('research-upload-type').value);
+            formData.append('confidenceLevel', document.getElementById('research-upload-confidence').value);
+            formData.append('content', document.getElementById('research-upload-content').value);
+            formData.append('sourceUrl', document.getElementById('research-upload-url').value);
+
+            try {
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        statusText.textContent = `Uploading... ${percent}% (${formatFileSize(e.loaded)} / ${formatFileSize(e.total)})`;
+                    }
+                });
+
+                xhr.addEventListener('load', async () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        const result = JSON.parse(xhr.responseText);
+                        await loadEpisodeWorkspace(state.selectedEpisode);
+                        closeModal();
+                        showModal('Upload Complete', `
+                            <div class="text-center py-4">
+                                <div class="text-4xl mb-4">${
+                                    result.category === 'video' ? '🎬' :
+                                    result.category === 'audio' ? '🎵' :
+                                    result.category === 'image' ? '🖼️' : '📄'
+                                }</div>
+                                <p class="text-white font-bold">${result.filename}</p>
+                                <p class="text-sm text-gray-500 mt-2">${formatFileSize(result.size)} uploaded successfully</p>
+                            </div>
+                        `);
+                        setTimeout(() => { closeModal(); render(); }, 2000);
+                    } else {
+                        const error = JSON.parse(xhr.responseText);
+                        throw new Error(error.error || 'Upload failed');
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    throw new Error('Network error during upload');
+                });
+
+                xhr.open('POST', '/api/research-documents/upload');
+                xhr.send(formData);
+
+            } catch (error) {
+                progressDiv.classList.add('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '📁 Upload Research Document';
+                showModal('Upload Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function viewResearchDoc(docId) {
+            const doc = state.episodeWorkspace?.researchDocs?.find(d => d.id === docId);
+            if (!doc) return;
+
+            showModal(doc.title || 'Research Document', `
+                <div class="space-y-4">
+                    <div class="flex items-center gap-3">
+                        ${doc.hasFile ? `<span class="text-3xl">${
+                            doc.fileCategory === 'video' ? '🎬' :
+                            doc.fileCategory === 'audio' ? '🎵' :
+                            doc.fileCategory === 'image' ? '🖼️' : '📄'
+                        }</span>` : '<span class="text-3xl">📝</span>'}
+                        <div>
+                            <p class="font-bold text-white">${doc.title || 'Untitled'}</p>
+                            <div class="flex items-center gap-2 mt-1">
+                                <span class="text-xs px-2 py-0.5 rounded ${
+                                    doc.documentType === 'agent_output' ? 'bg-blue-500/20 text-blue-400' :
+                                    doc.documentType === 'fact_check' ? 'bg-green-500/20 text-green-400' :
+                                    doc.documentType === 'notebooklm' ? 'bg-purple-500/20 text-purple-400' :
+                                    'bg-gray-500/20 text-gray-400'
+                                }">${doc.documentType || 'uploaded'}</span>
+                                <span class="text-xs px-2 py-0.5 rounded ${
+                                    doc.confidenceLevel === 'verified' ? 'bg-green-500/20 text-green-400' :
+                                    doc.confidenceLevel === 'probable' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    'bg-red-500/20 text-red-400'
+                                }">${doc.confidenceLevel || 'unverified'}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${doc.content ? `
+                        <div class="bg-[#0a0a0a] rounded-lg p-4 max-h-64 overflow-y-auto">
+                            <p class="text-white whitespace-pre-wrap">${doc.content}</p>
+                        </div>
+                    ` : ''}
+
+                    ${doc.sourceUrl ? `
+                        <div>
+                            <p class="text-xs text-gray-500 uppercase mb-1">Source</p>
+                            <a href="${doc.sourceUrl}" target="_blank" class="text-[#1a73e8] hover:underline text-sm break-all">${doc.sourceUrl}</a>
+                        </div>
+                    ` : ''}
+
+                    ${doc.hasFile ? `
+                        <div class="bg-[#0a0a0a] rounded-lg p-4">
+                            <p class="text-xs text-gray-500 uppercase mb-2">Attached File</p>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-white">${doc.filename}</p>
+                                    <p class="text-xs text-gray-500">${doc.mimeType} • ${formatFileSize(doc.sizeBytes)}</p>
+                                </div>
+                                ${doc.gcsPath ? `
+                                    <a href="/api/download/${doc.gcsPath}"
+                                       class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-4 py-2 rounded-lg transition text-sm">
+                                        📥 Download
+                                    </a>
+                                ` : ''}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="text-xs text-gray-500">
+                        ${doc.uploadedAt ? `<p>Uploaded: ${new Date(doc.uploadedAt).toLocaleString()}</p>` : ''}
+                        ${doc.createdAt ? `<p>Created: ${new Date(doc.createdAt).toLocaleString()}</p>` : ''}
+                    </div>
+
+                    <div class="flex gap-2">
+                        <button onclick="updateResearchConfidence('${doc.id}', 'verified')"
+                            class="flex-1 bg-green-600/20 hover:bg-green-600/30 text-green-400 py-2 rounded-lg transition text-sm">
+                            ✓ Mark Verified
+                        </button>
+                        <button onclick="updateResearchConfidence('${doc.id}', 'requires_confirmation')"
+                            class="flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 py-2 rounded-lg transition text-sm">
+                            ? Needs Confirmation
+                        </button>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function updateResearchConfidence(docId, confidenceLevel) {
+            try {
+                await api(`/api/research-documents/${docId}`, 'PUT', { confidenceLevel });
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        // =============================================================================
+        // SCRIPT VERSION FUNCTIONS
+        // =============================================================================
+        async function lockScript(versionId) {
+            if (!versionId) return;
+
+            try {
+                await api(`/api/script-versions/${versionId}/lock`, 'POST');
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                showModal('Script Locked', `
+                    <div class="text-center py-4">
+                        <div class="text-4xl mb-4">🔒</div>
+                        <p class="text-white font-bold">Script locked as V4 Final</p>
+                        <p class="text-sm text-gray-500 mt-2">Ready for voiceover generation</p>
+                    </div>
+                `);
+                setTimeout(() => { closeModal(); render(); }, 2000);
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function viewScriptVersion(versionId) {
+            const version = state.episodeWorkspace?.scriptVersions?.find(v => v.id === versionId);
+            if (!version) return;
+
+            showModal(`Script ${version.versionType || 'Version ' + version.versionNumber}`, `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs px-2 py-1 rounded ${
+                            version.isLocked ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                        }">${version.isLocked ? '🔒 Locked' : 'Draft'}</span>
+                        <span class="text-xs text-gray-500">${version.createdAt ? new Date(version.createdAt).toLocaleDateString() : ''}</span>
+                    </div>
+                    <div class="bg-[#0a0a0a] rounded-lg p-4 max-h-96 overflow-y-auto">
+                        <div class="markdown-content prose prose-invert">
+                            ${marked.parse(version.content || 'No content')}
+                        </div>
+                    </div>
+                    ${!version.isLocked ? `
+                        <button onclick="lockScript('${versionId}'); closeModal();"
+                            class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition">
+                            🔒 Lock as Final Version
+                        </button>
+                    ` : ''}
+                </div>
+            `);
+        }
+
+        // =============================================================================
+        // WORKFLOW PHASE FUNCTIONS
+        // =============================================================================
+        async function updatePhaseStatus(phase, status, notes = '') {
+            if (!state.selectedEpisode) return;
+
+            try {
+                await api(`/api/episodes/${state.selectedEpisode}/workflow/phase`, 'PUT', {
+                    phase: phase,
+                    status: status,
+                    notes: notes
+                });
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function showPhaseUpdateModal(phase) {
+            const phaseInfo = WORKFLOW_PHASES[phase];
+            if (!phaseInfo) return;
+
+            showModal(`Update ${phaseInfo.name} Phase`, `
+                <form onsubmit="submitPhaseUpdate(event, '${phase}')">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Status</label>
+                            <select id="phase-status"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="pending">Pending</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="review">Ready for Review</option>
+                                <option value="approved">Approved</option>
+                                <option value="rejected">Rejected (Needs Revision)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Notes (optional)</label>
+                            <textarea id="phase-notes" rows="3"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Add notes for the team..."></textarea>
+                        </div>
+                        <button type="submit" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            Update Phase Status
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function submitPhaseUpdate(event, phase) {
+            event.preventDefault();
+            const status = document.getElementById('phase-status').value;
+            const notes = document.getElementById('phase-notes').value;
+            await updatePhaseStatus(phase, status, notes);
+            closeModal();
+        }
+
+        // =============================================================================
+        // COMPLIANCE FUNCTIONS
+        // =============================================================================
+        function showAddComplianceItem() {
+            if (!state.selectedEpisode) return;
+
+            showModal('Add Compliance Item', `
+                <form onsubmit="createComplianceItem(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Item Type</label>
+                            <select id="compliance-type"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition">
+                                <option value="source_citation">Source Citation</option>
+                                <option value="archive_license">Archive License</option>
+                                <option value="exif_metadata">EXIF Metadata</option>
+                                <option value="legal_signoff">Legal Signoff</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Title/Claim</label>
+                            <input type="text" id="compliance-title" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition"
+                                placeholder="e.g., Apollo 13 explosion date">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source/Details</label>
+                            <textarea id="compliance-content" rows="3" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition"
+                                placeholder="Source document, URL, or details..."></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Status</label>
+                            <select id="compliance-status"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition">
+                                <option value="pending">Pending Verification</option>
+                                <option value="verified">Verified</option>
+                                <option value="flagged">Flagged for Review</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg transition">
+                            Add Compliance Item
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function createComplianceItem(event) {
+            event.preventDefault();
+
+            try {
+                await api('/api/compliance', 'POST', {
+                    episodeId: state.selectedEpisode,
+                    itemType: document.getElementById('compliance-type').value,
+                    title: document.getElementById('compliance-title').value,
+                    content: document.getElementById('compliance-content').value,
+                    status: document.getElementById('compliance-status').value
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function showNewProjectModal() {
+            closeProjectsModal();
+            showModal('Create New Project', `
+                <form onsubmit="createProject(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Project Title</label>
+                            <input type="text" id="new-project-title" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition"
+                                placeholder="Enter project title">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Description</label>
+                            <textarea id="new-project-description" rows="3"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition"
+                                placeholder="What is this documentary about?"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Status</label>
+                            <select id="new-project-status"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition">
+                                <option value="Planning">Planning</option>
+                                <option value="Research">Research</option>
+                                <option value="In Production">In Production</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg transition">
+                            Create Project
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function createProject(event) {
+            event.preventDefault();
+
+            const project = await api('/api/projects', 'POST', {
+                title: document.getElementById('new-project-title').value,
+                description: document.getElementById('new-project-description').value,
+                status: document.getElementById('new-project-status').value
+            });
+
+            await loadProjects();
+            await selectProject(project.id);
+            closeModal();
+        }
+
+        // =============================================================================
+        // ADD/EDIT MODALS
+        // =============================================================================
+        function showAddModal(type) {
+            const config = getFormConfig(type);
+            showModal(`Add ${config.title}`, renderForm(type, config, null));
+        }
+
+        async function showEditModal(type, id) {
+            const collection = type === 'episode' ? 'episodes' :
+                              type === 'shot' ? 'shots' :
+                              type === 'asset' ? 'assets' : `${type}s`;
+
+            // Handle 'research' which doesn't need 's' suffix
+            const stateKey = type === 'research' ? 'research' : collection;
+            const item = state[stateKey]?.find(i => i.id === id);
+
+            if (!item) return;
+
+            const config = getFormConfig(type);
+            showModal(`Edit ${config.title}`, renderForm(type, config, item));
+        }
+
+        function getFormConfig(type) {
+            const configs = {
+                episode: {
+                    title: 'Episode',
+                    collection: 'episodes',
+                    fields: [
+                        { name: 'title', label: 'Title', type: 'text', required: true },
+                        { name: 'description', label: 'Description', type: 'textarea' },
+                        { name: 'status', label: 'Status', type: 'select', options: ['Planning', 'Research', 'Scripting', 'Production', 'Post', 'Completed'] },
+                        { name: 'duration', label: 'Duration', type: 'text', placeholder: 'e.g., 45 min' }
+                    ]
+                },
+                research: {
+                    title: 'Research Note',
+                    collection: 'research',
+                    fields: [
+                        { name: 'title', label: 'Title', type: 'text', required: true },
+                        { name: 'content', label: 'Content', type: 'textarea', rows: 6 },
+                        { name: 'category', label: 'Category', type: 'select', options: ['Background', 'Archive', 'Interview', 'Technical', 'AI Generated'] }
+                    ]
+                },
+                interview: {
+                    title: 'Interview',
+                    collection: 'interviews',
+                    fields: [
+                        { name: 'subject', label: 'Subject Name', type: 'text', required: true },
+                        { name: 'role', label: 'Role/Title', type: 'text' },
+                        { name: 'status', label: 'Status', type: 'select', options: ['Requested', 'Confirmed', 'Completed', 'Cancelled'] },
+                        { name: 'questions', label: 'Questions', type: 'textarea' },
+                        { name: 'notes', label: 'Notes', type: 'textarea' }
+                    ]
+                },
+                shot: {
+                    title: 'Shot',
+                    collection: 'shots',
+                    fields: [
+                        { name: 'description', label: 'Description', type: 'text', required: true },
+                        { name: 'location', label: 'Location', type: 'text' },
+                        { name: 'equipment', label: 'Equipment', type: 'text' },
+                        { name: 'shootDate', label: 'Shoot Date', type: 'date' },
+                        { name: 'status', label: 'Status', type: 'select', options: ['Pending', 'Scheduled', 'Completed', 'Cancelled'] }
+                    ]
+                },
+                asset: {
+                    title: 'Asset',
+                    collection: 'assets',
+                    fields: [
+                        { name: 'title', label: 'Title', type: 'text', required: true },
+                        { name: 'type', label: 'Type', type: 'select', options: ['Video', 'Audio', 'Image', 'Document', 'Archive'] },
+                        { name: 'source', label: 'Source', type: 'text' },
+                        { name: 'status', label: 'Status', type: 'select', options: ['Pending', 'Acquired', 'Licensing', 'Ready'] },
+                        { name: 'notes', label: 'Notes', type: 'textarea' }
+                    ]
+                },
+                script: {
+                    title: 'Script',
+                    collection: 'scripts',
+                    fields: [
+                        { name: 'title', label: 'Title', type: 'text', required: true },
+                        { name: 'content', label: 'Content', type: 'textarea', rows: 12 }
+                    ]
+                }
+            };
+            return configs[type];
+        }
+
+        function renderForm(type, config, item) {
+            const isEdit = !!item;
+
+            return `
+                <form onsubmit="${isEdit ? `updateItem(event, '${config.collection}', '${item.id}')` : `addItem(event, '${config.collection}')`}">
+                    <div class="space-y-4">
+                        ${config.fields.map(field => `
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-2">${field.label}</label>
+                                ${field.type === 'textarea' ? `
+                                    <textarea name="${field.name}" rows="${field.rows || 3}" ${field.required ? 'required' : ''}
+                                        class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition font-mono"
+                                        placeholder="${field.placeholder || ''}">${item?.[field.name] || ''}</textarea>
+                                ` : field.type === 'select' ? `
+                                    <select name="${field.name}" ${field.required ? 'required' : ''}
+                                        class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition">
+                                        ${field.options.map(opt => `
+                                            <option value="${opt}" ${item?.[field.name] === opt ? 'selected' : ''}>${opt}</option>
+                                        `).join('')}
+                                    </select>
+                                ` : `
+                                    <input type="${field.type}" name="${field.name}" ${field.required ? 'required' : ''}
+                                        class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-red-600 transition"
+                                        placeholder="${field.placeholder || ''}"
+                                        value="${item?.[field.name] || ''}">
+                                `}
+                            </div>
+                        `).join('')}
+                        <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg transition">
+                            ${isEdit ? 'Update' : 'Create'} ${config.title}
+                        </button>
+                    </div>
+                </form>
+            `;
+        }
+
+        async function addItem(event, collection) {
+            event.preventDefault();
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+            data.projectId = state.selectedProject;
+
+            await api(`/api/${collection}`, 'POST', data);
+            await loadProjectData();
+            closeModal();
+            render();
+        }
+
+        async function updateItem(event, collection, id) {
+            event.preventDefault();
+            const form = event.target;
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+
+            await api(`/api/${collection}/${id}`, 'PUT', data);
+            await loadProjectData();
+            closeModal();
+            render();
+        }
+
+        async function deleteItem(collection, id) {
+            if (!confirm('Are you sure you want to delete this item?')) return;
+
+            await api(`/api/${collection}/${id}`, 'DELETE');
+            await loadProjectData();
+            render();
+        }
+
+        // =============================================================================
+        // UTILITIES
+        // =============================================================================
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // =============================================================================
+        // INITIALIZE
+        // =============================================================================
+        document.addEventListener('DOMContentLoaded', init);
