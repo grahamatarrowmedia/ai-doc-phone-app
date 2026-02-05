@@ -1314,8 +1314,11 @@
                             <button onclick="runResearchAgent()" class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-4 py-2 rounded-lg transition text-sm">
                                 🤖 AI Research
                             </button>
+                            <button onclick="showUploadResearchModal()" class="bg-[#1a1a1a] border border-[#333] hover:border-[#1a73e8] text-white px-4 py-2 rounded-lg transition text-sm">
+                                📁 Upload File
+                            </button>
                             <button onclick="showAddResearchDoc()" class="bg-[#1a1a1a] border border-[#333] hover:border-[#1a73e8] text-white px-4 py-2 rounded-lg transition text-sm">
-                                + Add Document
+                                + Add Note
                             </button>
                         </div>
                     </div>
@@ -1324,27 +1327,47 @@
                         <div class="text-center py-12 bg-[#151515] rounded-xl border border-[#222]">
                             <div class="text-4xl mb-4">🔬</div>
                             <p class="text-gray-500">No research documents yet</p>
-                            <p class="text-sm text-gray-600 mt-2">Upload documents or run AI research</p>
+                            <p class="text-sm text-gray-600 mt-2">Upload files, add notes, or run AI research</p>
                         </div>
                     ` : `
                         <div class="grid gap-3">
                             ${workspace.researchDocs.map(doc => `
-                                <div class="bg-[#151515] border border-[#222] rounded-lg p-4 hover:border-[#333] transition">
+                                <div class="bg-[#151515] border border-[#222] rounded-lg p-4 hover:border-[#333] transition cursor-pointer"
+                                     onclick="viewResearchDoc('${doc.id}')">
                                     <div class="flex justify-between items-start">
-                                        <div>
-                                            <span class="text-xs px-2 py-0.5 rounded ${
-                                                doc.documentType === 'agent_output' ? 'bg-blue-500/20 text-blue-400' :
-                                                doc.documentType === 'fact_check' ? 'bg-green-500/20 text-green-400' :
-                                                'bg-gray-500/20 text-gray-400'
-                                            }">${doc.documentType || 'uploaded'}</span>
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                ${doc.hasFile ? `<span class="text-lg">${
+                                                    doc.fileCategory === 'video' ? '🎬' :
+                                                    doc.fileCategory === 'audio' ? '🎵' :
+                                                    doc.fileCategory === 'image' ? '🖼️' : '📄'
+                                                }</span>` : ''}
+                                                <span class="text-xs px-2 py-0.5 rounded ${
+                                                    doc.documentType === 'agent_output' ? 'bg-blue-500/20 text-blue-400' :
+                                                    doc.documentType === 'fact_check' ? 'bg-green-500/20 text-green-400' :
+                                                    doc.documentType === 'notebooklm' ? 'bg-purple-500/20 text-purple-400' :
+                                                    'bg-gray-500/20 text-gray-400'
+                                                }">${doc.documentType || 'uploaded'}</span>
+                                                ${doc.hasFile ? `<span class="text-xs text-gray-500">${formatFileSize(doc.sizeBytes)}</span>` : ''}
+                                            </div>
                                             <h4 class="font-medium text-white mt-2">${doc.title || 'Untitled'}</h4>
-                                            <p class="text-sm text-gray-500 mt-1 line-clamp-2">${doc.content?.substring(0, 200) || ''}...</p>
+                                            <p class="text-sm text-gray-500 mt-1 line-clamp-2">${doc.content?.substring(0, 200) || ''}${doc.content?.length > 200 ? '...' : ''}</p>
+                                            ${doc.filename ? `<p class="text-xs text-gray-600 mt-1">📎 ${doc.filename}</p>` : ''}
                                         </div>
-                                        <span class="text-xs px-2 py-0.5 rounded ${
-                                            doc.confidenceLevel === 'verified' ? 'bg-green-500/20 text-green-400' :
-                                            doc.confidenceLevel === 'probable' ? 'bg-yellow-500/20 text-yellow-400' :
-                                            'bg-red-500/20 text-red-400'
-                                        }">${doc.confidenceLevel || 'unverified'}</span>
+                                        <div class="flex flex-col items-end gap-2">
+                                            <span class="text-xs px-2 py-0.5 rounded ${
+                                                doc.confidenceLevel === 'verified' ? 'bg-green-500/20 text-green-400' :
+                                                doc.confidenceLevel === 'probable' ? 'bg-yellow-500/20 text-yellow-400' :
+                                                'bg-red-500/20 text-red-400'
+                                            }">${doc.confidenceLevel || 'unverified'}</span>
+                                            ${doc.hasFile && doc.gcsPath ? `
+                                                <a href="/api/download/${doc.gcsPath}"
+                                                   onclick="event.stopPropagation();"
+                                                   class="text-xs bg-[#1a1a1a] border border-[#333] px-2 py-1 rounded hover:border-[#1a73e8] transition">
+                                                    Download
+                                                </a>
+                                            ` : ''}
+                                        </div>
                                     </div>
                                 </div>
                             `).join('')}
@@ -2336,6 +2359,248 @@ clip001.mov,00:00:00,00:00:30,Apollo launch sequence,rocket;launch;nasa,4K scan,
                     sourceUrl: document.getElementById('research-doc-url').value || null
                 });
 
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function showUploadResearchModal() {
+            if (!state.selectedEpisode) {
+                showModal('Error', '<p class="text-red-400">Please select an episode first</p>');
+                return;
+            }
+
+            showModal('Upload Research Document', `
+                <form id="research-upload-form" onsubmit="uploadResearchFile(event)">
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-500">Upload PDFs, documents, images, or other research files.</p>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">File</label>
+                            <input type="file" id="research-file" required
+                                accept=".pdf,.doc,.docx,.txt,.rtf,.md,.jpg,.jpeg,.png,.gif,.mp3,.wav,.mp4,.mov"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:bg-[#1a73e8] file:text-white hover:file:bg-[#1557b0]">
+                            <p class="text-xs text-gray-600 mt-1">Supported: PDF, DOC, TXT, Images, Audio, Video</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Title</label>
+                            <input type="text" id="research-upload-title"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Document title (defaults to filename)">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Document Type</label>
+                            <select id="research-upload-type"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="uploaded">Uploaded Document</option>
+                                <option value="fact_check">Fact Check Source</option>
+                                <option value="notebooklm">NotebookLM Export</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Confidence Level</label>
+                            <select id="research-upload-confidence"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="verified">Verified</option>
+                                <option value="probable">Probable</option>
+                                <option value="requires_confirmation" selected>Requires Confirmation</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Notes (optional)</label>
+                            <textarea id="research-upload-content" rows="3"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Additional notes about this document..."></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source URL (optional)</label>
+                            <input type="url" id="research-upload-url"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="https://...">
+                        </div>
+
+                        <div id="research-upload-progress" class="hidden">
+                            <div class="bg-[#222] rounded-full h-2 overflow-hidden">
+                                <div id="research-upload-progress-bar" class="bg-[#1a73e8] h-full transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                            <p id="research-upload-status" class="text-xs text-gray-500 mt-1 text-center">Uploading...</p>
+                        </div>
+
+                        <button type="submit" id="research-upload-submit-btn" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            📁 Upload Research Document
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function uploadResearchFile(event) {
+            event.preventDefault();
+
+            const fileInput = document.getElementById('research-file');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const progressDiv = document.getElementById('research-upload-progress');
+            const progressBar = document.getElementById('research-upload-progress-bar');
+            const statusText = document.getElementById('research-upload-status');
+            const submitBtn = document.getElementById('research-upload-submit-btn');
+
+            // Show progress
+            progressDiv.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('episodeId', state.selectedEpisode);
+            formData.append('projectId', state.selectedProject);
+            formData.append('title', document.getElementById('research-upload-title').value || file.name);
+            formData.append('documentType', document.getElementById('research-upload-type').value);
+            formData.append('confidenceLevel', document.getElementById('research-upload-confidence').value);
+            formData.append('content', document.getElementById('research-upload-content').value);
+            formData.append('sourceUrl', document.getElementById('research-upload-url').value);
+
+            try {
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        statusText.textContent = `Uploading... ${percent}% (${formatFileSize(e.loaded)} / ${formatFileSize(e.total)})`;
+                    }
+                });
+
+                xhr.addEventListener('load', async () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        const result = JSON.parse(xhr.responseText);
+                        await loadEpisodeWorkspace(state.selectedEpisode);
+                        closeModal();
+                        showModal('Upload Complete', `
+                            <div class="text-center py-4">
+                                <div class="text-4xl mb-4">${
+                                    result.category === 'video' ? '🎬' :
+                                    result.category === 'audio' ? '🎵' :
+                                    result.category === 'image' ? '🖼️' : '📄'
+                                }</div>
+                                <p class="text-white font-bold">${result.filename}</p>
+                                <p class="text-sm text-gray-500 mt-2">${formatFileSize(result.size)} uploaded successfully</p>
+                            </div>
+                        `);
+                        setTimeout(() => { closeModal(); render(); }, 2000);
+                    } else {
+                        const error = JSON.parse(xhr.responseText);
+                        throw new Error(error.error || 'Upload failed');
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    throw new Error('Network error during upload');
+                });
+
+                xhr.open('POST', '/api/research-documents/upload');
+                xhr.send(formData);
+
+            } catch (error) {
+                progressDiv.classList.add('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '📁 Upload Research Document';
+                showModal('Upload Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        function viewResearchDoc(docId) {
+            const doc = state.episodeWorkspace?.researchDocs?.find(d => d.id === docId);
+            if (!doc) return;
+
+            showModal(doc.title || 'Research Document', `
+                <div class="space-y-4">
+                    <div class="flex items-center gap-3">
+                        ${doc.hasFile ? `<span class="text-3xl">${
+                            doc.fileCategory === 'video' ? '🎬' :
+                            doc.fileCategory === 'audio' ? '🎵' :
+                            doc.fileCategory === 'image' ? '🖼️' : '📄'
+                        }</span>` : '<span class="text-3xl">📝</span>'}
+                        <div>
+                            <p class="font-bold text-white">${doc.title || 'Untitled'}</p>
+                            <div class="flex items-center gap-2 mt-1">
+                                <span class="text-xs px-2 py-0.5 rounded ${
+                                    doc.documentType === 'agent_output' ? 'bg-blue-500/20 text-blue-400' :
+                                    doc.documentType === 'fact_check' ? 'bg-green-500/20 text-green-400' :
+                                    doc.documentType === 'notebooklm' ? 'bg-purple-500/20 text-purple-400' :
+                                    'bg-gray-500/20 text-gray-400'
+                                }">${doc.documentType || 'uploaded'}</span>
+                                <span class="text-xs px-2 py-0.5 rounded ${
+                                    doc.confidenceLevel === 'verified' ? 'bg-green-500/20 text-green-400' :
+                                    doc.confidenceLevel === 'probable' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    'bg-red-500/20 text-red-400'
+                                }">${doc.confidenceLevel || 'unverified'}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${doc.content ? `
+                        <div class="bg-[#0a0a0a] rounded-lg p-4 max-h-64 overflow-y-auto">
+                            <p class="text-white whitespace-pre-wrap">${doc.content}</p>
+                        </div>
+                    ` : ''}
+
+                    ${doc.sourceUrl ? `
+                        <div>
+                            <p class="text-xs text-gray-500 uppercase mb-1">Source</p>
+                            <a href="${doc.sourceUrl}" target="_blank" class="text-[#1a73e8] hover:underline text-sm break-all">${doc.sourceUrl}</a>
+                        </div>
+                    ` : ''}
+
+                    ${doc.hasFile ? `
+                        <div class="bg-[#0a0a0a] rounded-lg p-4">
+                            <p class="text-xs text-gray-500 uppercase mb-2">Attached File</p>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-white">${doc.filename}</p>
+                                    <p class="text-xs text-gray-500">${doc.mimeType} • ${formatFileSize(doc.sizeBytes)}</p>
+                                </div>
+                                ${doc.gcsPath ? `
+                                    <a href="/api/download/${doc.gcsPath}"
+                                       class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-4 py-2 rounded-lg transition text-sm">
+                                        📥 Download
+                                    </a>
+                                ` : ''}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="text-xs text-gray-500">
+                        ${doc.uploadedAt ? `<p>Uploaded: ${new Date(doc.uploadedAt).toLocaleString()}</p>` : ''}
+                        ${doc.createdAt ? `<p>Created: ${new Date(doc.createdAt).toLocaleString()}</p>` : ''}
+                    </div>
+
+                    <div class="flex gap-2">
+                        <button onclick="updateResearchConfidence('${doc.id}', 'verified')"
+                            class="flex-1 bg-green-600/20 hover:bg-green-600/30 text-green-400 py-2 rounded-lg transition text-sm">
+                            ✓ Mark Verified
+                        </button>
+                        <button onclick="updateResearchConfidence('${doc.id}', 'requires_confirmation')"
+                            class="flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 py-2 rounded-lg transition text-sm">
+                            ? Needs Confirmation
+                        </button>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function updateResearchConfidence(docId, confidenceLevel) {
+            try {
+                await api(`/api/research-documents/${docId}`, 'PUT', { confidenceLevel });
                 await loadEpisodeWorkspace(state.selectedEpisode);
                 closeModal();
                 render();

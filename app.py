@@ -2896,6 +2896,98 @@ def delete_research_document(doc_id):
     return jsonify({"success": True})
 
 
+@app.route("/api/research-documents/upload", methods=["POST"])
+def upload_research_document():
+    """Upload a file as a research document."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Get form data
+    episode_id = request.form.get('episodeId')
+    project_id = request.form.get('projectId')
+    title = request.form.get('title', file.filename)
+    document_type = request.form.get('documentType', 'uploaded')
+    confidence_level = request.form.get('confidenceLevel', 'requires_confirmation')
+    content = request.form.get('content', '')
+    source_url = request.form.get('sourceUrl', '')
+
+    if not episode_id:
+        return jsonify({"error": "episodeId is required"}), 400
+
+    try:
+        # Read file content
+        file_content = file.read()
+        file_size = len(file_content)
+
+        # Determine content type
+        content_type = file.content_type or 'application/octet-stream'
+
+        # Generate safe filename
+        original_filename = file.filename
+        safe_filename = re.sub(r'[^\w\-.]', '_', original_filename)
+
+        # Generate unique path
+        file_hash = hashlib.md5(file_content).hexdigest()[:8]
+        blob_path = f"research/{episode_id}/{file_hash}_{safe_filename}"
+
+        # Upload to GCS
+        ensure_bucket_exists(STORAGE_BUCKET)
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(blob_path)
+        blob.upload_from_string(file_content, content_type=content_type)
+
+        print(f"Uploaded research document: {blob_path} ({file_size} bytes)")
+
+        # Determine file type for categorization
+        file_ext = original_filename.rsplit('.', 1)[-1].lower() if '.' in original_filename else ''
+        file_category = 'document'
+        if file_ext in ['mp4', 'mov', 'avi', 'mkv', 'webm']:
+            file_category = 'video'
+        elif file_ext in ['mp3', 'wav', 'aiff', 'aac', 'm4a']:
+            file_category = 'audio'
+        elif file_ext in ['jpg', 'jpeg', 'png', 'gif', 'tiff', 'bmp', 'webp']:
+            file_category = 'image'
+        elif file_ext in ['pdf', 'doc', 'docx', 'txt', 'rtf', 'md']:
+            file_category = 'document'
+
+        # Create research document entry with file info
+        doc_data = {
+            'episodeId': episode_id,
+            'projectId': project_id,
+            'title': title,
+            'content': content or f'Uploaded file: {original_filename}',
+            'documentType': document_type,
+            'confidenceLevel': confidence_level,
+            'sourceUrl': source_url,
+            'fileCategory': file_category,
+            'gcsPath': blob_path,
+            'filename': original_filename,
+            'mimeType': content_type,
+            'sizeBytes': file_size,
+            'hasFile': True,
+            'uploadedAt': datetime.utcnow().isoformat()
+        }
+
+        doc = create_doc('research_documents', doc_data)
+
+        return jsonify({
+            "success": True,
+            "researchDocument": doc,
+            "gcsPath": blob_path,
+            "filename": original_filename,
+            "size": file_size,
+            "category": file_category
+        }), 201
+
+    except Exception as e:
+        print(f"Error uploading research document: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # --- Archive Logs ---
 @app.route("/api/episodes/<episode_id>/archive-logs", methods=["GET"])
 def get_episode_archive_logs(episode_id):
