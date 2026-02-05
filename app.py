@@ -3579,6 +3579,399 @@ def bulk_create_episodes(series_id):
         return jsonify({"error": str(e)}), 500
 
 
+# --- Voiceover Generation ---
+@app.route("/api/ai/generate-voiceover", methods=["POST"])
+def ai_generate_voiceover():
+    """Generate voiceover audio from script (placeholder for 11 Labs integration)."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        script_version_id = data.get('scriptVersionId')
+        voice_profile = data.get('voiceProfile', 'default')
+
+        if not episode_id or not script_version_id:
+            return jsonify({"error": "episodeId and scriptVersionId are required"}), 400
+
+        # Get script version
+        script_version = get_doc('script_versions', script_version_id)
+        if not script_version:
+            return jsonify({"error": "Script version not found"}), 404
+
+        # Extract VO sections from script
+        script_content = script_version.get('content', '')
+
+        # Parse [VOICEOVER] sections
+        vo_sections = []
+        import re
+        vo_pattern = r'\[VOICEOVER\](.*?)(?=\[ARCHIVE|\[INTERVIEW|\[GEN AI|\[VOICEOVER\]|SEGMENT|\Z)'
+        matches = re.findall(vo_pattern, script_content, re.DOTALL | re.IGNORECASE)
+
+        for i, match in enumerate(matches):
+            vo_text = match.strip().strip('"\'')
+            if vo_text:
+                vo_sections.append({
+                    'segmentIndex': i + 1,
+                    'text': vo_text,
+                    'estimatedDuration': len(vo_text.split()) / 2.5,  # ~150 words per minute
+                    'status': 'pending'
+                })
+
+        # Create voiceover task record
+        vo_task = create_doc('agent_tasks', {
+            'episodeId': episode_id,
+            'agentType': 'voiceover_generator',
+            'taskType': 'generate_voiceover',
+            'status': 'pending',
+            'inputData': {
+                'scriptVersionId': script_version_id,
+                'voiceProfile': voice_profile,
+                'sections': vo_sections
+            },
+            'outputData': None
+        })
+
+        # NOTE: In production, this would integrate with 11 Labs API
+        # For now, return the parsed VO sections
+        return jsonify({
+            'success': True,
+            'taskId': vo_task['id'],
+            'voiceProfile': voice_profile,
+            'sections': vo_sections,
+            'totalSections': len(vo_sections),
+            'estimatedTotalDuration': sum(s['estimatedDuration'] for s in vo_sections),
+            'message': 'Voiceover generation queued. 11 Labs integration pending.'
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/voiceover-status", methods=["GET"])
+def get_voiceover_status(episode_id):
+    """Get voiceover generation status for an episode."""
+    try:
+        tasks = get_docs_by_episode('agent_tasks', episode_id)
+        vo_tasks = [t for t in tasks if t.get('agentType') == 'voiceover_generator']
+
+        return jsonify({
+            'episodeId': episode_id,
+            'tasks': vo_tasks,
+            'hasVoiceover': len(vo_tasks) > 0,
+            'latestStatus': vo_tasks[-1].get('status') if vo_tasks else None
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Interview Transcription ---
+@app.route("/api/ai/transcribe-interview", methods=["POST"])
+def ai_transcribe_interview():
+    """Transcribe interview audio using Gemini (placeholder)."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        interview_id = data.get('interviewId')
+        audio_url = data.get('audioUrl')
+        speaker_name = data.get('speakerName', 'Unknown Speaker')
+
+        if not episode_id:
+            return jsonify({"error": "episodeId is required"}), 400
+
+        # Create transcription task
+        task = create_agent_task(episode_id, 'interview_producer', 'transcribe_interview', {
+            'interviewId': interview_id,
+            'audioUrl': audio_url,
+            'speakerName': speaker_name
+        })
+
+        # NOTE: In production, this would use Gemini's audio capabilities
+        # For demo, create a placeholder transcript structure
+        transcript_data = {
+            'episodeId': episode_id,
+            'interviewId': interview_id,
+            'speakerName': speaker_name,
+            'speakerIdentified': True,
+            'timecodesAligned': False,
+            'segments': [],
+            'status': 'pending',
+            'agentTaskId': task['id'],
+            'sourceAudioUrl': audio_url
+        }
+
+        transcript = create_doc('interview_transcripts', transcript_data)
+
+        return jsonify({
+            'success': True,
+            'taskId': task['id'],
+            'transcriptId': transcript['id'],
+            'message': 'Transcription queued. Gemini audio processing integration pending.'
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/transcripts/<transcript_id>/process", methods=["POST"])
+def process_transcript(transcript_id):
+    """Process transcript to extract soundbites and metadata."""
+    try:
+        transcript = get_doc('interview_transcripts', transcript_id)
+        if not transcript:
+            return jsonify({"error": "Transcript not found"}), 404
+
+        # Get full transcript text
+        full_text = "\n".join([
+            f"[{s.get('timecode', '')}] {s.get('text', '')}"
+            for s in transcript.get('segments', [])
+        ])
+
+        if not full_text:
+            return jsonify({"error": "No transcript content to process"}), 400
+
+        # Use AI to extract soundbites and add metadata
+        prompt = f"""Analyze this interview transcript and identify:
+1. Top 10 most powerful/emotional soundbites (with timecodes if available)
+2. Key factual statements that could support documentary narrative
+3. Emotional peaks suitable for voiceover bed
+4. Any claims that require fact-checking
+
+Interview with: {transcript.get('speakerName', 'Unknown')}
+
+Transcript:
+{full_text[:8000]}
+
+Format each soundbite with:
+- Timecode (if available)
+- Quote text
+- Metadata tag (emotional/factual/technical/anecdote)
+- Suggested use in documentary"""
+
+        response = generate_ai_response(prompt,
+            "You are an interview producer specialist. Extract the most compelling soundbites for documentary use.")
+
+        # Update transcript with processed data
+        update_doc('interview_transcripts', transcript_id, {
+            'processed': True,
+            'processedAt': datetime.utcnow().isoformat(),
+            'aiAnalysis': response
+        })
+
+        return jsonify({
+            'success': True,
+            'transcriptId': transcript_id,
+            'analysis': response
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- NASA API Integration ---
+@app.route("/api/nasa/search", methods=["POST"])
+def nasa_search():
+    """Search NASA archives for footage and images."""
+    try:
+        data = request.get_json()
+        query = data.get('query', '')
+        media_type = data.get('mediaType', 'video')  # video, image, audio
+        year_start = data.get('yearStart')
+        year_end = data.get('yearEnd')
+
+        if not query:
+            return jsonify({"error": "query is required"}), 400
+
+        # NASA Images API
+        nasa_api_url = "https://images-api.nasa.gov/search"
+        params = {
+            'q': query,
+            'media_type': media_type,
+        }
+        if year_start:
+            params['year_start'] = year_start
+        if year_end:
+            params['year_end'] = year_end
+
+        response = requests.get(nasa_api_url, params=params, timeout=30)
+
+        if response.status_code != 200:
+            return jsonify({"error": f"NASA API error: {response.status_code}"}), 500
+
+        nasa_data = response.json()
+        items = nasa_data.get('collection', {}).get('items', [])
+
+        # Format results
+        results = []
+        for item in items[:50]:  # Limit to 50 results
+            item_data = item.get('data', [{}])[0]
+            links = item.get('links', [])
+            preview_url = next((l.get('href') for l in links if l.get('rel') == 'preview'), None)
+
+            results.append({
+                'nasaId': item_data.get('nasa_id'),
+                'title': item_data.get('title'),
+                'description': item_data.get('description', '')[:500],
+                'dateCreated': item_data.get('date_created'),
+                'mediaType': item_data.get('media_type'),
+                'keywords': item_data.get('keywords', []),
+                'previewUrl': preview_url,
+                'center': item_data.get('center')
+            })
+
+        return jsonify({
+            'success': True,
+            'query': query,
+            'totalResults': nasa_data.get('collection', {}).get('metadata', {}).get('total_hits', 0),
+            'results': results
+        })
+
+    except requests.Timeout:
+        return jsonify({"error": "NASA API timeout"}), 504
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/nasa/import-to-archive", methods=["POST"])
+def nasa_import_to_archive():
+    """Import NASA search results to episode archive bucket."""
+    try:
+        data = request.get_json()
+        episode_id = data.get('episodeId')
+        nasa_items = data.get('items', [])
+
+        if not episode_id or not nasa_items:
+            return jsonify({"error": "episodeId and items are required"}), 400
+
+        # Create archive log from NASA items
+        clips = []
+        for item in nasa_items:
+            clips.append({
+                'filename': item.get('nasaId', ''),
+                'timecodeIn': '',
+                'timecodeOut': '',
+                'description': item.get('title', ''),
+                'keywords': item.get('keywords', []),
+                'technicalNotes': f"NASA Center: {item.get('center', 'Unknown')}",
+                'nasaId': item.get('nasaId'),
+                'previewUrl': item.get('previewUrl'),
+                'dateCreated': item.get('dateCreated')
+            })
+
+        log_data = {
+            'episodeId': episode_id,
+            'source': 'nasa_api',
+            'clips': clips,
+            'clipCount': len(clips),
+            'importedAt': datetime.utcnow().isoformat()
+        }
+
+        log = create_doc('archive_logs', log_data)
+
+        return jsonify({
+            'success': True,
+            'logId': log['id'],
+            'importedCount': len(clips)
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Episode Brief Management ---
+@app.route("/api/episodes/<episode_id>/brief", methods=["GET"])
+def get_episode_brief(episode_id):
+    """Get episode brief."""
+    try:
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            return jsonify({"error": "Episode not found"}), 404
+
+        return jsonify(episode.get('brief', {
+            'summary': '',
+            'storyBeats': [],
+            'targetInterviewees': [],
+            'archiveRequirements': [],
+            'uniqueAngle': ''
+        }))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/brief", methods=["PUT"])
+def update_episode_brief(episode_id):
+    """Update episode brief."""
+    try:
+        data = request.get_json()
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            return jsonify({"error": "Episode not found"}), 404
+
+        brief = episode.get('brief', {})
+        brief.update(data)
+
+        updated = update_doc('episodes', episode_id, {'brief': brief})
+        return jsonify(updated.get('brief', {}))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/approve-phase", methods=["POST"])
+def approve_episode_phase(episode_id):
+    """Approve current phase and advance to next."""
+    try:
+        data = request.get_json()
+        notes = data.get('notes', '')
+
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            return jsonify({"error": "Episode not found"}), 404
+
+        workflow = episode.get('workflow', {})
+        current_phase = workflow.get('currentPhase', 'research')
+
+        # Update phase to approved
+        result = update_episode_phase(episode_id, current_phase, 'approved', notes)
+
+        return jsonify({
+            'success': True,
+            'previousPhase': current_phase,
+            'newPhase': result.get('workflow', {}).get('currentPhase'),
+            'episode': result
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/episodes/<episode_id>/request-revision", methods=["POST"])
+def request_episode_revision(episode_id):
+    """Request revision for current phase."""
+    try:
+        data = request.get_json()
+        notes = data.get('notes', '')
+
+        if not notes:
+            return jsonify({"error": "Revision notes are required"}), 400
+
+        episode = get_doc('episodes', episode_id)
+        if not episode:
+            return jsonify({"error": "Episode not found"}), 404
+
+        workflow = episode.get('workflow', {})
+        current_phase = workflow.get('currentPhase', 'research')
+
+        # Update phase to rejected with notes
+        result = update_episode_phase(episode_id, current_phase, 'rejected', notes)
+
+        return jsonify({
+            'success': True,
+            'phase': current_phase,
+            'status': 'rejected',
+            'notes': notes,
+            'episode': result
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)

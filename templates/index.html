@@ -1767,6 +1767,330 @@
             document.getElementById('projects-modal').classList.add('hidden');
         }
 
+        // =============================================================================
+        // SERIES MANAGEMENT
+        // =============================================================================
+        function showNewSeriesModal() {
+            showModal('Create New Series', `
+                <form onsubmit="createSeries(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Series Title</label>
+                            <input type="text" id="new-series-title" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="e.g., The NASA Files">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Description</label>
+                            <textarea id="new-series-description" rows="2"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Brief series description"></textarea>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Episode Count</label>
+                                <input type="number" id="new-series-episode-count" value="30" min="1" max="100"
+                                    class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Episode Duration</label>
+                                <input type="text" id="new-series-duration" value="45 minutes"
+                                    class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Delivery Format</label>
+                            <select id="new-series-format"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="Broadcast HD + streaming">Broadcast HD + streaming</option>
+                                <option value="Streaming only">Streaming only</option>
+                                <option value="Broadcast HD">Broadcast HD</option>
+                                <option value="4K HDR">4K HDR</option>
+                            </select>
+                        </div>
+                        <div class="pt-4 border-t border-[#222]">
+                            <label class="flex items-center gap-3 cursor-pointer">
+                                <input type="checkbox" id="new-series-bulk-create" checked
+                                    class="w-5 h-5 rounded bg-[#0a0a0a] border-[#333] text-[#1a73e8] focus:ring-[#1a73e8]">
+                                <span class="text-sm text-gray-400">Auto-create episode placeholders</span>
+                            </label>
+                        </div>
+                        <button type="submit" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            Create Series
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function createSeries(event) {
+            event.preventDefault();
+
+            const title = document.getElementById('new-series-title').value;
+            const episodeCount = parseInt(document.getElementById('new-series-episode-count').value);
+            const bulkCreate = document.getElementById('new-series-bulk-create').checked;
+
+            // Create series
+            const series = await api('/api/series', 'POST', {
+                projectId: state.selectedProject,
+                title: title,
+                description: document.getElementById('new-series-description').value,
+                episodeCount: episodeCount,
+                episodeDuration: document.getElementById('new-series-duration').value,
+                deliveryFormat: document.getElementById('new-series-format').value,
+                knowledgeBase: {
+                    seriesBible: null,
+                    brandGuidelines: null,
+                    editorialTone: null,
+                    archiveCredentials: [],
+                    complianceChecklist: null,
+                    researchDocuments: []
+                }
+            });
+
+            // Bulk create episodes if checked
+            if (bulkCreate && episodeCount > 0) {
+                const episodes = [];
+                for (let i = 1; i <= episodeCount; i++) {
+                    episodes.push({
+                        title: `Episode ${i}`,
+                        description: `${title} - Episode ${i}`,
+                        status: 'Planning',
+                        duration: document.getElementById('new-series-duration').value
+                    });
+                }
+
+                await api(`/api/series/${series.id}/episodes/bulk-create`, 'POST', {
+                    projectId: state.selectedProject,
+                    episodes: episodes
+                });
+            }
+
+            await loadProjectData();
+            closeModal();
+            render();
+        }
+
+        function showSeriesKnowledgeBase(seriesId) {
+            const series = state.series.find(s => s.id === seriesId);
+            if (!series) return;
+
+            const kb = series.knowledgeBase || {};
+
+            showModal(`${series.title} - Knowledge Base`, `
+                <div class="space-y-4">
+                    <p class="text-sm text-gray-500">Upload series-level documents that apply to all episodes.</p>
+
+                    <div class="grid gap-3">
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Series Bible</h4>
+                                    <p class="text-xs text-gray-500">Format document, tone guide</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'seriesBible')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.seriesBible ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Brand Guidelines</h4>
+                                    <p class="text-xs text-gray-500">Visual identity, graphics standards</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'brandGuidelines')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.brandGuidelines ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Editorial Tone Guide</h4>
+                                    <p class="text-xs text-gray-500">Writing style, voice guidelines</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'editorialTone')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.editorialTone ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#0a0a0a] border border-[#333] rounded-lg p-4">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="font-medium text-white">Compliance Checklist</h4>
+                                    <p class="text-xs text-gray-500">Legal requirements, standards</p>
+                                </div>
+                                <button onclick="uploadKBDocument('${seriesId}', 'complianceChecklist')"
+                                    class="text-xs bg-[#1a73e8]/20 text-[#1a73e8] px-3 py-1 rounded hover:bg-[#1a73e8]/30 transition">
+                                    ${kb.complianceChecklist ? 'Replace' : 'Upload'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="closeModal()" class="w-full mt-4 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg transition">
+                        Close
+                    </button>
+                </div>
+            `);
+        }
+
+        // =============================================================================
+        // ARCHIVE IMPORT
+        // =============================================================================
+        function showImportArchiveModal() {
+            if (!state.selectedEpisode) {
+                showModal('Error', '<p class="text-red-400">Please select an episode first</p>');
+                return;
+            }
+
+            showModal('Import Archive Log', `
+                <form onsubmit="importArchiveCSV(event)">
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-500">Import archive footage log from Quickture CSV export.</p>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source</label>
+                            <select id="import-source"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-purple-600 transition">
+                                <option value="quickture">Quickture Export</option>
+                                <option value="getty">Getty Images</option>
+                                <option value="nasa_api">NASA API</option>
+                                <option value="pond5">Pond5</option>
+                                <option value="manual">Manual Entry</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">CSV Content</label>
+                            <textarea id="import-csv-content" rows="8" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white font-mono text-xs focus:outline-none focus:border-purple-600 transition"
+                                placeholder="Filename,Timecode_In,Timecode_Out,Description,Keywords,Technical_Notes,Getty_ID
+clip001.mov,00:00:00,00:00:30,Apollo launch sequence,rocket;launch;nasa,4K scan,"></textarea>
+                        </div>
+
+                        <div class="text-xs text-gray-500">
+                            <p class="font-bold mb-1">Expected columns:</p>
+                            <p>Filename, Timecode_In, Timecode_Out, Description, Keywords, Technical_Notes, Getty_ID, NASA_ID</p>
+                        </div>
+
+                        <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition">
+                            📥 Import Archive Log
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function importArchiveCSV(event) {
+            event.preventDefault();
+
+            const csvContent = document.getElementById('import-csv-content').value;
+            const source = document.getElementById('import-source').value;
+
+            try {
+                const result = await api('/api/archive-logs/import-csv', 'POST', {
+                    episodeId: state.selectedEpisode,
+                    csvContent: csvContent,
+                    source: source
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                showModal('Import Complete', `
+                    <div class="text-center py-4">
+                        <div class="text-4xl mb-4">✅</div>
+                        <p class="text-white font-bold">Successfully imported ${result.clipCount || 0} clips</p>
+                        <p class="text-sm text-gray-500 mt-2">Source: ${source}</p>
+                    </div>
+                `);
+                setTimeout(() => { closeModal(); render(); }, 2000);
+            } catch (error) {
+                showModal('Import Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
+        // =============================================================================
+        // RESEARCH DOCUMENT UPLOAD
+        // =============================================================================
+        function showAddResearchDoc() {
+            if (!state.selectedEpisode) return;
+
+            showModal('Add Research Document', `
+                <form onsubmit="createResearchDoc(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Title</label>
+                            <input type="text" id="research-doc-title" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Document title">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Document Type</label>
+                            <select id="research-doc-type"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="uploaded">Uploaded Document</option>
+                                <option value="fact_check">Fact Check Source</option>
+                                <option value="notebooklm">NotebookLM Export</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Confidence Level</label>
+                            <select id="research-doc-confidence"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition">
+                                <option value="verified">Verified</option>
+                                <option value="probable">Probable</option>
+                                <option value="requires_confirmation" selected>Requires Confirmation</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Content</label>
+                            <textarea id="research-doc-content" rows="6" required
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="Document content, notes, or key points..."></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Source URL (optional)</label>
+                            <input type="url" id="research-doc-url"
+                                class="w-full bg-[#0a0a0a] border border-[#333] rounded-lg p-3 text-white focus:outline-none focus:border-[#1a73e8] transition"
+                                placeholder="https://...">
+                        </div>
+                        <button type="submit" class="w-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-bold py-3 rounded-lg transition">
+                            Add Document
+                        </button>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function createResearchDoc(event) {
+            event.preventDefault();
+
+            try {
+                await api('/api/research-documents', 'POST', {
+                    episodeId: state.selectedEpisode,
+                    title: document.getElementById('research-doc-title').value,
+                    content: document.getElementById('research-doc-content').value,
+                    documentType: document.getElementById('research-doc-type').value,
+                    confidenceLevel: document.getElementById('research-doc-confidence').value,
+                    sourceUrl: document.getElementById('research-doc-url').value || null
+                });
+
+                await loadEpisodeWorkspace(state.selectedEpisode);
+                closeModal();
+                render();
+            } catch (error) {
+                showModal('Error', `<p class="text-red-400">${error.message}</p>`);
+            }
+        }
+
         function showNewProjectModal() {
             closeProjectsModal();
             showModal('Create New Project', `
