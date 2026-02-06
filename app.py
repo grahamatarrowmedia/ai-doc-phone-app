@@ -15,12 +15,18 @@ load_dotenv()  # Load .env file for local development
 
 import requests
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
+from flask_cors import CORS
 from google.cloud import firestore, storage
 from weasyprint import HTML
 import vertexai
 from vertexai.generative_models import GenerativeModel, Tool, grounding
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
+CORS(app, origins=[
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://*.run.app",
+])
 
 # Configuration
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "your-project-id")
@@ -4158,6 +4164,268 @@ def request_episode_revision(episode_id):
             'notes': notes,
             'episode': result
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============== Documentary Studio Compatibility Endpoints ==============
+# Thin shim endpoints matching the request/response shapes the React frontend expects.
+
+@app.route("/api/health")
+def api_health():
+    """Health check for the Documentary Studio frontend."""
+    return jsonify({
+        "status": "ok",
+        "platform": "Vertex AI (Flask)",
+        "project": PROJECT_ID,
+        "location": LOCATION,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    })
+
+
+@app.route("/api/search-archive", methods=["POST"])
+def api_search_archive():
+    """Archive search via AI prompt → JSON array of clips."""
+    try:
+        data = request.get_json()
+        query = data.get("query", "")
+        source = data.get("source", "general")
+
+        prompt = f"""You are an archive search specialist. Search the "{source}" archive for documentary footage related to: "{query}".
+
+Based on your knowledge of what would be available in {source}'s archive, provide realistic archive footage results.
+
+Return a JSON array of archive clips. Each clip must have:
+- title: string
+- duration_seconds: number (30-300)
+- visual_description: string
+- archive_source: string
+- category: string (news/documentary/raw_footage/interview/b-roll)
+- year_range: string
+- quality: string (HD/SD/4K/Film)
+
+Provide 5-8 relevant results. Return ONLY the JSON array."""
+
+        response_text = generate_ai_response(prompt)
+        try:
+            import json
+            result = json.loads(response_text.strip().removeprefix("```json").removesuffix("```").strip())
+        except (json.JSONDecodeError, ValueError):
+            result = []
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/analyze-clip", methods=["POST"])
+def api_analyze_clip():
+    """Clip visual analysis → {visual_description, mood, quality_score}."""
+    try:
+        data = request.get_json()
+        clip_title = data.get("clipTitle", "")
+
+        prompt = f"""Provide visual analysis for: "{clip_title}".
+Return ONLY valid JSON with these keys:
+- visual_description: string
+- mood: string
+- quality_score: number (0-100)"""
+
+        response_text = generate_ai_response(prompt)
+        try:
+            import json
+            result = json.loads(response_text.strip().removeprefix("```json").removesuffix("```").strip())
+        except (json.JSONDecodeError, ValueError):
+            result = {"visual_description": response_text, "mood": "unknown", "quality_score": 50}
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/find-experts", methods=["POST"])
+def api_find_experts():
+    """Expert discovery → JSON array of experts."""
+    try:
+        data = request.get_json()
+        topic = data.get("topic", "")
+
+        prompt = f"""Find 3 real-world experts on: "{topic}".
+Return ONLY a JSON array where each object has:
+- name: string
+- title: string
+- affiliation: string
+- relevance: string
+- relevance_score: number (0.0-1.0)"""
+
+        response_text = generate_ai_response(prompt)
+        try:
+            import json
+            result = json.loads(response_text.strip().removeprefix("```json").removesuffix("```").strip())
+        except (json.JSONDecodeError, ValueError):
+            result = []
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/refine-beat", methods=["POST"])
+def api_refine_beat():
+    """Script beat rewrite → {refined: text}."""
+    try:
+        data = request.get_json()
+        current_content = data.get("currentContent", "")
+        instruction = data.get("instruction", "")
+        context = data.get("context", "")
+
+        prompt = f"""You are a script doctor. Rewrite this beat: "{current_content}"
+Instruction: "{instruction}"
+{f'Context: {context}' if context else ''}
+Return ONLY the rewritten text, no markdown or explanations."""
+
+        response_text = generate_ai_response(prompt)
+        return jsonify({"refined": response_text.strip()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/index-source", methods=["POST"])
+def api_index_source():
+    """Source indexing (URL/text/youtube) → analysis JSON."""
+    try:
+        data = request.get_json()
+        source_type = data.get("type", "")
+        url = data.get("url", "")
+        content = data.get("content", "")
+        title = data.get("title", "")
+
+        if source_type in ("url", "youtube") and url:
+            kind = "YouTube video URL" if source_type == "youtube" else "web URL"
+            prompt = f"""Analyze this {kind}: "{url}"
+Provide a comprehensive analysis of what this content likely contains.
+Return ONLY valid JSON with:
+- title: string (inferred title)
+- summary: string (200-300 words)
+- key_topics: array of strings (5-8 topics)
+- key_facts: array of strings (5-8 facts)
+- content_type: string (article/research/news/government/video/etc)
+- suggested_questions: array of 3 research questions this source could answer"""
+
+        elif source_type == "text" and content:
+            prompt = f"""Analyze this research document/text:
+
+"{content[:15000]}"
+
+Return ONLY valid JSON with:
+- title: string (infer a title if not obvious)
+- summary: string (200-300 words)
+- key_topics: array of strings (5-8 topics)
+- key_facts: array of strings (5-8 facts)
+- content_type: string (research/transcript/notes/article/etc)
+- suggested_questions: array of 3 research questions this text could answer"""
+        else:
+            return jsonify({"error": "Invalid source type or missing content"}), 400
+
+        response_text = generate_ai_response(prompt)
+        try:
+            import json
+            analysis = json.loads(response_text.strip().removeprefix("```json").removesuffix("```").strip())
+        except (json.JSONDecodeError, ValueError):
+            analysis = {"title": title or url or "Unknown", "summary": response_text}
+
+        return jsonify({
+            "status": "indexed",
+            "title": analysis.get("title", title or url or "Text Document"),
+            "summary": analysis.get("summary", ""),
+            "key_topics": analysis.get("key_topics", []),
+            "key_facts": analysis.get("key_facts", []),
+            "content_type": analysis.get("content_type", source_type),
+            "suggested_questions": analysis.get("suggested_questions", [])
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+
+@app.route("/api/query-sources", methods=["POST"])
+def api_query_sources():
+    """Cross-source research → {response, key_facts, source_citations, ...}."""
+    try:
+        data = request.get_json()
+        query = data.get("query", "")
+        sources = data.get("sources", [])
+        engine = data.get("engine", "google_deep_research")
+
+        source_context = "\n\n---\n\n".join(
+            f"[Source {i+1}: {s.get('title', 'Untitled')}]\n{s.get('summary', '')}\nKey Facts: {'; '.join(s.get('key_facts', []))}"
+            for i, s in enumerate(sources)
+        )
+
+        if engine == "google_deep_research":
+            prompt = f"""[DEEP RESEARCH MODE] You are a senior documentary researcher with access to the following indexed sources:
+
+{source_context}
+
+Research Question: "{query}"
+
+Conduct a thorough multi-step analysis:
+1. Cross-reference information across all sources
+2. Identify corroborating evidence and contradictions
+3. Note any gaps in the available information
+4. Synthesize findings into a comprehensive response
+
+Return ONLY valid JSON with:
+- response: string (detailed 300-500 word answer synthesizing all sources)
+- key_facts: array of strings (8-12 specific facts)
+- source_citations: array of objects with source_title and relevant_info
+- confidence_level: string (high/medium/low)
+- follow_up_questions: array of 3 questions for deeper research
+- contradictions: array of conflicting information found
+- gaps: array of information gaps"""
+        else:
+            prompt = f"""You are a documentary researcher. Based on these sources:
+
+{source_context}
+
+Question: "{query}"
+
+Return ONLY valid JSON with:
+- response: string (comprehensive answer)
+- key_facts: array of strings
+- source_citations: array of objects with source_title and relevant_info
+- follow_up_questions: array of 2-3 questions"""
+
+        response_text = generate_ai_response(prompt)
+        try:
+            import json
+            result = json.loads(response_text.strip().removeprefix("```json").removesuffix("```").strip())
+        except (json.JSONDecodeError, ValueError):
+            result = {"response": response_text, "key_facts": [], "source_citations": []}
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """General chat with history → {response: text}."""
+    try:
+        data = request.get_json()
+        message = data.get("message", "")
+        system_instruction = data.get("systemInstruction", "")
+        history = data.get("history", [])
+
+        # Build conversation context from history
+        context_parts = []
+        for msg in history:
+            role = msg.get("role", "user")
+            parts = msg.get("parts", [])
+            text = " ".join(p.get("text", "") for p in parts)
+            if text:
+                context_parts.append(f"{'User' if role == 'user' else 'Assistant'}: {text}")
+
+        conversation_context = "\n".join(context_parts)
+        full_prompt = f"""{f'Previous conversation:{chr(10)}{conversation_context}{chr(10)}{chr(10)}' if conversation_context else ''}User: {message}"""
+
+        response_text = generate_ai_response(full_prompt, system_prompt=system_instruction)
+        return jsonify({"response": response_text})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
