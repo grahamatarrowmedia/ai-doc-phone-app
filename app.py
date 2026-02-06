@@ -4746,6 +4746,91 @@ def api_gcs_purge_cache():
         return jsonify({"error": str(e)}), 500
 
 
+# ============== ElevenLabs Proxy Routes ==============
+
+@app.route("/api/elevenlabs/voices", methods=["POST"])
+def proxy_elevenlabs_voices():
+    """Proxy ElevenLabs voice list through backend so API key stays server-side."""
+    try:
+        data = request.get_json()
+        user_id = data.get("userId")
+        if not user_id:
+            return jsonify({"error": "userId required"}), 400
+        user_doc = get_doc('users', user_id)
+        if not user_doc or not user_doc.get('elevenLabsApiKey'):
+            return jsonify({"voices": []}), 200
+        api_key = user_doc['elevenLabsApiKey']
+        resp = requests.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+            timeout=10
+        )
+        if not resp.ok:
+            return jsonify({"voices": []}), 200
+        voices_data = resp.json()
+        voices = [
+            {
+                "id": v.get("voice_id"),
+                "name": v.get("name"),
+                "category": v.get("category", "Generated"),
+                "provider": "elevenlabs",
+                "preview_url": v.get("preview_url")
+            }
+            for v in voices_data.get("voices", [])
+        ]
+        return jsonify({"voices": voices})
+    except Exception as e:
+        print(f"ElevenLabs voices proxy error: {e}")
+        return jsonify({"voices": []}), 200
+
+
+@app.route("/api/elevenlabs/generate", methods=["POST"])
+def proxy_elevenlabs_generate():
+    """Proxy ElevenLabs TTS through backend so API key stays server-side."""
+    try:
+        data = request.get_json()
+        user_id = data.get("userId")
+        voice_id = data.get("voiceId")
+        text = data.get("text", "")
+        settings = data.get("settings", {})
+        if not user_id or not voice_id:
+            return jsonify({"error": "userId and voiceId required"}), 400
+        user_doc = get_doc('users', user_id)
+        if not user_doc or not user_doc.get('elevenLabsApiKey'):
+            return jsonify({"error": "No ElevenLabs API key configured"}), 400
+        api_key = user_doc['elevenLabsApiKey']
+        resp = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": settings.get("stability", 0.5),
+                    "similarity_boost": settings.get("similarity_boost", 0.75),
+                    "style": settings.get("style", 0.0),
+                    "use_speaker_boost": settings.get("use_speaker_boost", True)
+                }
+            },
+            timeout=30
+        )
+        if not resp.ok:
+            error_detail = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+            return jsonify({"error": error_detail.get("detail", {}).get("message", "Generation failed")}), 500
+        # Upload audio to GCS and return URL
+        import uuid
+        audio_filename = f"voiceover/{uuid.uuid4().hex}.mp3"
+        bucket = storage_client.bucket(STORAGE_BUCKET)
+        blob = bucket.blob(audio_filename)
+        blob.upload_from_string(resp.content, content_type="audio/mpeg")
+        blob.make_public()
+        audio_url = blob.public_url
+        return jsonify({"audioUrl": audio_url})
+    except Exception as e:
+        print(f"ElevenLabs generate proxy error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ============== Auto-seed users on startup ==============
 try:
     if not list(db.collection(COLLECTIONS['users']).limit(1).stream()):
