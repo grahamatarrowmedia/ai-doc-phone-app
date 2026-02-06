@@ -4704,16 +4704,97 @@ def api_gcs_buckets():
 
 @app.route("/api/vertex/models", methods=["GET"])
 def api_vertex_models():
-    """Curated list of Vertex AI models in use."""
+    """List live Cloud Run services as infrastructure models."""
     try:
+        import google.auth
+        import google.auth.transport.requests as gauth_requests
+
+        credentials, project = google.auth.default()
+        auth_req = gauth_requests.Request()
+        credentials.refresh(auth_req)
+
+        # Query Cloud Run Admin API for real service data
+        cr_resp = requests.get(
+            f"https://run.googleapis.com/v2/projects/{PROJECT_ID}/locations/{LOCATION}/services",
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            timeout=10
+        )
+        if cr_resp.status_code != 200:
+            raise Exception(f"Cloud Run API returned {cr_resp.status_code}")
+
+        services = cr_resp.json().get("services", [])
+        models = []
+        for svc in services:
+            name = svc.get("name", "").split("/")[-1]
+            conditions = svc.get("conditions", [])
+            ready = any(c.get("type") == "Ready" and c.get("state") == "CONDITION_SUCCEEDED" for c in conditions)
+            latest_rev = svc.get("latestReadyRevision", "").split("/")[-1]
+            uri = svc.get("uri", "")
+
+            # Health-check the service to get real latency
+            latency_ms = 0
+            status = "active" if ready else "error"
+            try:
+                t0 = datetime.now()
+                hc = requests.get(uri, timeout=5, allow_redirects=True)
+                latency_ms = int((datetime.now() - t0).total_seconds() * 1000)
+                if hc.status_code >= 500:
+                    status = "error"
+            except Exception:
+                status = "error"
+                latency_ms = 9999
+
+            models.append({
+                "id": name,
+                "name": name,
+                "version": latest_rev[-12:] if latest_rev else "unknown",
+                "status": status,
+                "latencyMs": latency_ms,
+                "callsPerMin": 0,
+                "url": uri
+            })
+        return jsonify(models)
+    except Exception as e:
+        # Fallback to curated list if Cloud Run API fails
         models = [
             {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "version": "v2.0", "status": "active", "latencyMs": 450, "callsPerMin": 60},
             {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "version": "v2.5", "status": "active", "latencyMs": 1200, "callsPerMin": 30},
-            {"id": "imagen-3", "name": "Imagen 3", "version": "v3.0", "status": "active", "latencyMs": 2500, "callsPerMin": 15},
-            {"id": "veo-2", "name": "Veo 2", "version": "v2.0", "status": "pending", "latencyMs": 8000, "callsPerMin": 5},
-            {"id": "text-embedding-005", "name": "Text Embedding", "version": "v005", "status": "active", "latencyMs": 120, "callsPerMin": 120},
         ]
         return jsonify(models)
+
+
+@app.route("/api/cloud/stats", methods=["GET"])
+def api_cloud_stats():
+    """Live infrastructure stats from Firestore and GCS."""
+    try:
+        collections = ["projects", "series", "episodes", "scripts",
+                        "research", "assets", "interviews", "shots", "users"]
+        counts = {}
+        for coll_name in collections:
+            prefix = ENV_PREFIX if ENV_PREFIX and coll_name != "users" else ""
+            full_name = f"{prefix}{coll_name}"
+            docs = db.collection(full_name).limit(1000).stream()
+            counts[coll_name] = sum(1 for _ in docs)
+
+        # GCS quick summary (just bucket count + total size of primary bucket)
+        bucket_count = sum(1 for _ in storage_client.list_buckets())
+        primary_size_bytes = 0
+        try:
+            primary_bucket = storage_client.bucket(STORAGE_BUCKET)
+            blobs = list(primary_bucket.list_blobs(max_results=500))
+            primary_size_bytes = sum(b.size or 0 for b in blobs)
+        except Exception:
+            pass
+
+        return jsonify({
+            "firestore": counts,
+            "totalDocuments": sum(counts.values()),
+            "gcsBucketCount": bucket_count,
+            "primaryBucketSizeGb": round(primary_size_bytes / (1024 ** 3), 2),
+            "primaryBucketFiles": len(blobs) if 'blobs' in dir() else 0,
+            "region": LOCATION,
+            "project": PROJECT_ID
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
