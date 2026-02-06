@@ -1,3 +1,15 @@
+# AiM Flask Middleware — Blue/Green Cloud Build Pipeline
+#
+# Deploys a new revision with 0% traffic, smoke-tests it via a tagged URL,
+# then shifts 100% traffic. If smoke tests fail, production stays on the
+# previous revision.
+#
+# Rollback (post-promotion):
+#   gcloud run services update-traffic <SERVICE> \
+#     --region=us-central1 --to-revisions=<previous-revision>=100
+#
+# The previous revision name is logged in the capture-current-revision step.
+
 steps:
   # Step 1: Determine environment based on branch
   - name: 'gcr.io/cloud-builders/docker'
@@ -20,7 +32,7 @@ steps:
         echo "Service: $(cat /workspace/service.txt)"
         echo "Bucket: $(cat /workspace/bucket.txt)"
 
-  # Step 2: Build Docker image
+  # Step 2: Build Docker image with commit SHA + latest tags
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build'
     entrypoint: 'bash'
@@ -28,9 +40,14 @@ steps:
       - '-c'
       - |
         SERVICE=$(cat /workspace/service.txt)
-        docker build -t "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest" .
+        docker build \
+          -t "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:$COMMIT_SHA" \
+          -t "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest" \
+          .
+    waitFor:
+      - set-env
 
-  # Step 3: Push Docker image
+  # Step 3: Push both image tags
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push'
     entrypoint: 'bash'
@@ -38,11 +55,29 @@ steps:
       - '-c'
       - |
         SERVICE=$(cat /workspace/service.txt)
+        docker push "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:$COMMIT_SHA"
         docker push "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest"
+    waitFor:
+      - build
 
-  # Step 4: Deploy to Cloud Run
+  # Step 4: Capture current serving revision for rollback reference
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'deploy'
+    id: 'capture-current-revision'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        SERVICE=$(cat /workspace/service.txt)
+        CURRENT=$(gcloud run services describe "$${SERVICE}" \
+          --region=us-central1 --format='value(status.traffic[0].revisionName)' 2>/dev/null || echo "none")
+        echo "$${CURRENT}" > /workspace/previous-revision.txt
+        echo "=== Current serving revision: $${CURRENT} ==="
+    waitFor:
+      - set-env
+
+  # Step 5: Deploy new revision with 0% traffic, tagged "green"
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-green'
     entrypoint: 'bash'
     args:
       - '-c'
@@ -52,14 +87,85 @@ steps:
         ENV=$(cat /workspace/env.txt)
 
         gcloud run deploy "$${SERVICE}" \
-          --image "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest" \
+          --image "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:$COMMIT_SHA" \
           --region us-central1 \
           --platform managed \
           --allow-unauthenticated \
           --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$${BUCKET},APP_ENV=$${ENV},APP_VERSION=1.1.0-$SHORT_SHA" \
           --memory 2Gi \
           --timeout 3600 \
-          --cpu 2
+          --cpu 2 \
+          --no-traffic \
+          --tag green
+    waitFor:
+      - push
+      - capture-current-revision
+
+  # Step 6: Smoke-test the green revision via its tagged URL
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'smoke-test'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        SERVICE=$(cat /workspace/service.txt)
+
+        # Get the green tag URL from the service description
+        GREEN_URL=$(gcloud run services describe "$${SERVICE}" \
+          --region=us-central1 \
+          --format='value(status.traffic.url)' | tr ',' '\n' | grep 'green---' | head -1)
+
+        if [ -z "$${GREEN_URL}" ]; then
+          echo "ERROR: Could not find green tag URL"
+          exit 1
+        fi
+        echo "=== Green URL: $${GREEN_URL} ==="
+
+        # Test 1: /health endpoint
+        echo "=== Testing /health ==="
+        HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$${GREEN_URL}/health")
+        if [ "$${HTTP_CODE}" != "200" ]; then
+          echo "FAIL: /health returned $${HTTP_CODE} (expected 200)"
+          exit 1
+        fi
+        echo "PASS: /health returned 200"
+
+        # Test 2: /api/health endpoint
+        echo "=== Testing /api/health ==="
+        HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$${GREEN_URL}/api/health")
+        if [ "$${HTTP_CODE}" != "200" ]; then
+          echo "FAIL: /api/health returned $${HTTP_CODE} (expected 200)"
+          exit 1
+        fi
+        echo "PASS: /api/health returned 200"
+
+        echo "=== All smoke tests passed ==="
+    waitFor:
+      - deploy-green
+
+  # Step 7: Promote green revision to 100% traffic, then clean up tag
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'promote-green'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        SERVICE=$(cat /workspace/service.txt)
+
+        echo "=== Promoting green revision to 100% traffic ==="
+        gcloud run services update-traffic "$${SERVICE}" \
+          --region=us-central1 \
+          --to-latest
+
+        echo "=== Removing green tag ==="
+        gcloud run services update-traffic "$${SERVICE}" \
+          --region=us-central1 \
+          --remove-tags=green
+
+        echo "=== Previous revision (for rollback): $(cat /workspace/previous-revision.txt) ==="
+        echo "=== Deployment complete ==="
+    waitFor:
+      - smoke-test
 
 options:
   logging: CLOUD_LOGGING_ONLY
