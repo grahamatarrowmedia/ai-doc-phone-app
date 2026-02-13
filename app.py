@@ -44,8 +44,8 @@ db = firestore.Client()
 # Initialize Cloud Storage
 storage_client = storage.Client()
 
-# Collection prefix based on environment (dev uses separate collections)
-COLLECTION_PREFIX = "dev_" if APP_ENV == "dev" else ""
+# Collection prefix based on environment (each env uses separate collections)
+COLLECTION_PREFIX = {"dev": "dev_", "oldui": "oldui_"}.get(APP_ENV, "")
 
 # Collection names (prefixed by environment)
 COLLECTIONS = {

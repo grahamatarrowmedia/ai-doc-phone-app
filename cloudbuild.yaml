@@ -1,62 +1,33 @@
 steps:
-  # Step 1: Determine environment based on branch
-  - name: 'gcr.io/cloud-builders/docker'
-    id: 'set-env'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        if [ "$BRANCH_NAME" = "main" ]; then
-          echo "prod" > /workspace/env.txt
-          echo "doc-production-app" > /workspace/service.txt
-          echo "$PROJECT_ID-doc-assets" > /workspace/bucket.txt
-        else
-          echo "dev" > /workspace/env.txt
-          echo "doc-production-app-dev" > /workspace/service.txt
-          echo "$PROJECT_ID-doc-assets-dev" > /workspace/bucket.txt
-        fi
-        echo "Branch: $BRANCH_NAME"
-        echo "Environment: $(cat /workspace/env.txt)"
-        echo "Service: $(cat /workspace/service.txt)"
-        echo "Bucket: $(cat /workspace/bucket.txt)"
-
-  # Step 2: Build Docker image
+  # Step 1: Build Docker image for old-ui service
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build'
-    entrypoint: 'bash'
     args:
-      - '-c'
-      - |
-        SERVICE=$(cat /workspace/service.txt)
-        docker build -t "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest" .
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-old-ui:latest'
+      - '.'
 
-  # Step 3: Push Docker image
+  # Step 2: Push Docker image
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push'
-    entrypoint: 'bash'
     args:
-      - '-c'
-      - |
-        SERVICE=$(cat /workspace/service.txt)
-        docker push "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest"
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-old-ui:latest'
 
-  # Step 4: Deploy to Cloud Run
+  # Step 3: Deploy to Cloud Run as separate service
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        SERVICE=$(cat /workspace/service.txt)
-        BUCKET=$(cat /workspace/bucket.txt)
-        ENV=$(cat /workspace/env.txt)
-
-        gcloud run deploy "$${SERVICE}" \
-          --image "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/$${SERVICE}:latest" \
+        gcloud run deploy doc-production-app-old-ui \
+          --image "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-old-ui:latest" \
           --region us-central1 \
           --platform managed \
           --allow-unauthenticated \
-          --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$${BUCKET},APP_ENV=$${ENV},APP_VERSION=1.1.0-$SHORT_SHA" \
+          --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$PROJECT_ID-doc-assets-oldui,APP_ENV=oldui,APP_VERSION=old-ui-$SHORT_SHA" \
           --memory 2Gi \
           --timeout 3600 \
           --cpu 2
