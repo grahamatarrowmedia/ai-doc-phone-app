@@ -3,6 +3,7 @@ Documentary Production App - Flask backend with Firestore and Vertex AI
 """
 import os
 import re
+import json
 import hashlib
 import threading
 import base64
@@ -437,6 +438,20 @@ def get_project_dashboard_stats(project_id):
 
 # ============== AI Functions ==============
 
+def clean_ai_response(text):
+    """Strip markdown code-block wrappers (```json ... ```) from AI output."""
+    cleaned = text.strip()
+    # Remove ```json or ``` prefix
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[len("```json"):]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    # Remove trailing ```
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
 def generate_ai_response(prompt, system_prompt=""):
     """Generate AI response using Vertex AI."""
     try:
@@ -725,6 +740,7 @@ def delete_project(project_id):
 def get_episodes(project_id):
     """Get all episodes for a project."""
     episodes = get_all_docs('episodes', project_id)
+    episodes.sort(key=lambda e: e.get('order', e.get('episodeNumber', 0)))
     return jsonify(episodes)
 
 
@@ -1930,7 +1946,8 @@ Format your response with:
 
     system_prompt = """You are a documentary research assistant. Provide comprehensive background research with real source links. Always format URLs as markdown links that can be clicked. Focus on factual, verifiable information from credible sources. When reference documents are provided, incorporate their information and expand upon it."""
 
-    result = generate_ai_response(prompt, system_prompt)
+    raw_result = generate_ai_response(prompt, system_prompt)
+    result = clean_ai_response(raw_result)
 
     print(f"[DEBUG] AI response length: {len(result)} chars")
 
@@ -3742,7 +3759,8 @@ Focus on verifiable facts and primary sources. Identify potential contradictions
         update_agent_task(task['id'], 'in_progress')
 
         try:
-            response = generate_ai_response(prompt, system_prompt)
+            raw_response = generate_ai_response(prompt, system_prompt)
+            response = clean_ai_response(raw_response)
 
             # Create research document from output
             research_doc = create_doc('research_documents', {
@@ -4490,19 +4508,29 @@ def api_find_experts():
     try:
         data = request.get_json()
         topic = data.get("topic", "")
+        expertise_domain = data.get("expertise_domain", "")
+        context = data.get("context", "")
+        role = data.get("role", "")
 
-        prompt = f"""Find 3 real-world experts on: "{topic}".
+        domain_hint = f'\nExpertise domain: "{expertise_domain}"' if expertise_domain else ""
+        context_hint = f"\nDocumentary context: {context}" if context else ""
+        role_hint = f"\nThe expert's role in the documentary: {role}" if role else ""
+
+        prompt = f"""Find 3 real-world experts on: "{topic}".{domain_hint}{context_hint}{role_hint}
+
+IMPORTANT: Find experts whose primary academic or professional expertise directly relates to "{topic}". Do NOT return AI, technology, or computer science researchers unless the topic is specifically about AI or technology.
+
 Return ONLY a JSON array where each object has:
-- name: string
-- title: string
-- affiliation: string
-- relevance: string
+- name: string (real person with verifiable credentials)
+- title: string (their professional title)
+- affiliation: string (university, institution, or organisation)
+- expertise_area: string (their specific domain of expertise)
+- relevance: string (why they are relevant to this topic)
 - relevance_score: number (0.0-1.0)"""
 
         response_text = generate_ai_response(prompt)
         try:
-            import json
-            result = json.loads(response_text.strip().removeprefix("```json").removesuffix("```").strip())
+            result = json.loads(clean_ai_response(response_text))
         except (json.JSONDecodeError, ValueError):
             result = []
         return jsonify(result)
@@ -4859,7 +4887,11 @@ def save_project_brief(project_id):
         project = get_doc('projects', project_id)
         if not project:
             return jsonify({"error": "Project not found"}), 404
-        update_doc('projects', project_id, {'brief': data})
+        updates = {'brief': data}
+        # Sync target_duration_minutes to project level if provided in brief
+        if data.get('episode_duration_minutes'):
+            updates['target_duration_minutes'] = data['episode_duration_minutes']
+        update_doc('projects', project_id, updates)
         return jsonify({"success": True, "brief": data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -5008,7 +5040,17 @@ def api_generate_script():
         data = request.get_json()
         title = data.get("title", "")
         description = data.get("description", "")
-        duration = data.get("duration", 30)
+        project_id = data.get("projectId", "")
+        # Look up project's target duration if not explicitly provided
+        default_duration = 60
+        if project_id:
+            try:
+                project = get_doc('projects', project_id)
+                if project:
+                    default_duration = project.get('target_duration_minutes', 60)
+            except Exception:
+                pass
+        duration = data.get("duration", default_duration)
         reference_style = data.get("referenceStyle", "cinematic")
         research_context = data.get("researchContext", [])
         archive_context = data.get("archiveContext", [])
