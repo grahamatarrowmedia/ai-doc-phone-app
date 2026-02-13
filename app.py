@@ -4726,11 +4726,7 @@ def seed_users():
 
 @app.route("/api/email-briefs", methods=["POST"])
 def email_briefs():
-    """Email B-Roll Briefs to the production team."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-
+    """Email B-Roll Briefs to the production team via SendGrid HTTP API."""
     try:
         data = request.get_json()
         project_title = data.get('project_title', 'Untitled')
@@ -4747,11 +4743,16 @@ def email_briefs():
             for p in brief.get('prompts', []):
                 target = p.get('target', 'image').upper()
                 badge_color = '#e53e3e' if target == 'VIDEO' else '#4299e1'
+                camera_line = ""
+                if target == 'VIDEO':
+                    cam = p.get('camera_motion', '')
+                    dur = p.get('duration_guidance', '')
+                    camera_line = f'<p style="margin:0;color:#888;font-size:12px;">Camera: {cam} | Duration: {dur}</p>'
                 prompts_html += f"""
                 <div style="margin:8px 0;padding:10px;background:#f7f7f7;border-radius:6px;">
                     <span style="display:inline-block;padding:2px 8px;border-radius:4px;background:{badge_color};color:white;font-size:11px;font-weight:bold;">{target}</span>
                     <p style="margin:6px 0 2px;color:#333;">{p.get('prompt', '')}</p>
-                    {'<p style="margin:0;color:#888;font-size:12px;">Camera: ' + p.get('camera_motion', '') + ' | Duration: ' + p.get('duration_guidance', '') + '</p>' if target == 'VIDEO' else ''}
+                    {camera_line}
                     <p style="margin:0;color:#888;font-size:12px;">Aspect: {p.get('aspect_ratio', '16:9')}</p>
                 </div>"""
 
@@ -4778,45 +4779,56 @@ def email_briefs():
             </div>
         </div>"""
 
-        # Send email
-        smtp_host = os.environ.get('SMTP_HOST', '')
-        smtp_port = int(os.environ.get('SMTP_PORT', '587'))
-        smtp_user = os.environ.get('SMTP_USER', '')
-        smtp_pass = os.environ.get('SMTP_PASS', '')
+        # Send via SendGrid HTTP API (Cloud Run blocks SMTP ports)
+        sendgrid_api_key = os.environ.get('SENDGRID_API_KEY', '')
         sender = os.environ.get('EMAIL_SENDER', 'aim-studio@arrowmedia.com')
 
-        if not smtp_host:
-            # No SMTP configured — store the brief email in Firestore for retrieval
+        if not sendgrid_api_key:
+            # No SendGrid configured — store in Firestore for manual retrieval
             email_record = create_doc('feedback', {
                 'type': 'email_brief',
                 'projectTitle': project_title,
                 'recipients': recipients,
                 'briefCount': len(briefs),
                 'html': html,
-                'status': 'queued_no_smtp',
+                'status': 'queued_no_sendgrid',
             })
             return jsonify({
                 "success": True,
-                "message": f"{len(briefs)} brief(s) queued (SMTP not configured — stored for manual sending)",
+                "message": f"{len(briefs)} brief(s) queued (SendGrid not configured — stored for manual sending)",
                 "email_id": email_record.get('id'),
-                "smtp_configured": False
+                "email_configured": False
             })
 
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f'[AiM] B-Roll Briefs: {project_title} ({len(briefs)} briefs)'
-        msg['From'] = sender
-        msg['To'] = ', '.join(recipients)
-        msg.attach(MIMEText(html, 'html'))
+        # Build SendGrid v3 API payload
+        to_list = [{"email": r} for r in recipients]
+        subject = f'[AiM] B-Roll Briefs: {project_title} ({len(briefs)} briefs)'
 
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(sender, recipients, msg.as_string())
+        sg_payload = {
+            "personalizations": [{"to": to_list, "subject": subject}],
+            "from": {"email": sender, "name": "AiM Documentary Studio"},
+            "content": [{"type": "text/html", "value": html}]
+        }
+
+        sg_response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            json=sg_payload,
+            headers={
+                "Authorization": f"Bearer {sendgrid_api_key}",
+                "Content-Type": "application/json"
+            }
+        )
+
+        if sg_response.status_code not in (200, 201, 202):
+            print(f"[ERROR] SendGrid response: {sg_response.status_code} {sg_response.text}")
+            return jsonify({
+                "error": f"SendGrid returned {sg_response.status_code}: {sg_response.text}"
+            }), 502
 
         return jsonify({
             "success": True,
             "message": f"{len(briefs)} brief(s) emailed to {', '.join(recipients)}",
-            "smtp_configured": True
+            "email_configured": True
         })
 
     except Exception as e:
