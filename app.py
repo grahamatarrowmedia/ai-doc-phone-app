@@ -3979,9 +3979,11 @@ def transcribe_file():
         word_timestamps = request.form.get('word_timestamps', 'false') == 'true'
 
         # Build transcription prompt
+        diarization_instruction = 'Identify different speakers and label them (Speaker 1, Speaker 2, etc.).' if speaker_diarization else ''
+        speaker_field = '"speaker": "Speaker 1",' if speaker_diarization else ''
         prompt = f"""Transcribe the following audio/video file accurately.
 Language: {language}
-{'Identify different speakers and label them (Speaker 1, Speaker 2, etc.).' if speaker_diarization else ''}
+{diarization_instruction}
 
 Return your response as valid JSON with this exact structure:
 {{
@@ -3992,7 +3994,7 @@ Return your response as valid JSON with this exact structure:
       "start_time": 0.0,
       "end_time": 5.2,
       "text": "Segment text...",
-      {"\"speaker\": \"Speaker 1\"," if speaker_diarization else ""}
+      {speaker_field}
       "confidence": 0.95
     }}
   ],
@@ -4033,11 +4035,13 @@ Return ONLY the JSON object, no markdown formatting."""
 
     except json_module.JSONDecodeError:
         # If Gemini returns non-JSON, return the raw text as a single segment
+        raw_text = response_text if 'response_text' in locals() else ""
+        lang = language if 'language' in locals() else "en"
         return jsonify({
-            "text": response_text if 'response_text' in dir() else "",
-            "full_text": response_text if 'response_text' in dir() else "",
+            "text": raw_text,
+            "full_text": raw_text,
             "segments": [],
-            "language": language if 'language' in dir() else "en",
+            "language": lang,
             "status": "complete"
         })
     except Exception as e:
