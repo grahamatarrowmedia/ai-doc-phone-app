@@ -1,38 +1,36 @@
 steps:
+  # Step 1: Build Docker image
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-app-research-augmented:latest'
       - '.'
 
+  # Step 2: Push Docker image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest']
-
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    id: 'push'
     args:
-      - 'run'
-      - 'deploy'
-      - 'doc-production-app-dev'
-      - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest'
-      - '--region'
-      - 'us-central1'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$PROJECT_ID-doc-assets,APP_ENV=dev,APP_VERSION=1.1.0-$SHORT_SHA'
-      - '--memory'
-      - '2Gi'
-      - '--timeout'
-      - '3600'
-      - '--cpu'
-      - '2'
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-app-research-augmented:latest'
 
-images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-production-app-dev:latest'
+  # Step 3: Deploy to Cloud Run as separate service
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud run deploy doc-app-research-augmented \
+          --image "us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run/doc-app-research-augmented:latest" \
+          --region us-central1 \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1,STORAGE_BUCKET=$PROJECT_ID-doc-assets-researchaug,APP_ENV=researchaug,APP_VERSION=research-aug-$SHORT_SHA" \
+          --memory 2Gi \
+          --timeout 3600 \
+          --cpu 2
 
 options:
   logging: CLOUD_LOGGING_ONLY
