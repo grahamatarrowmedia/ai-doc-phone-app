@@ -1498,6 +1498,17 @@ def delete_script(script_id):
     return jsonify({"success": True})
 
 
+@app.route("/api/scripts/project/<project_id>/current", methods=["GET"])
+def get_current_script(project_id):
+    """Get the most recent script for a project."""
+    scripts = get_all_docs('scripts', project_id)
+    if not scripts:
+        return jsonify({"error": "No scripts found for this project"}), 404
+    # Return the most recently updated script
+    scripts.sort(key=lambda s: s.get('updatedAt', s.get('createdAt', '')), reverse=True)
+    return jsonify(scripts[0])
+
+
 # ============== Feedback Routes ==============
 
 @app.route("/api/feedback", methods=["POST"])
@@ -3943,6 +3954,97 @@ def ai_transcribe_interview():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/transcribe", methods=["POST"])
+def transcribe_file():
+    """Transcribe an audio/video file using Gemini's multimodal capabilities."""
+    import json as json_module
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+
+        file = request.files['file']
+        if not file.filename:
+            return jsonify({"error": "Empty filename"}), 400
+
+        # Read file bytes
+        file_bytes = file.read()
+        max_size = 25 * 1024 * 1024  # 25MB
+        if len(file_bytes) > max_size:
+            return jsonify({"error": f"File too large. Maximum size is 25MB."}), 400
+
+        # Determine MIME type
+        mime_type = file.content_type or 'audio/mpeg'
+        language = request.form.get('language', 'en')
+        speaker_diarization = request.form.get('speaker_diarization', 'false') == 'true'
+        word_timestamps = request.form.get('word_timestamps', 'false') == 'true'
+
+        # Build transcription prompt
+        prompt = f"""Transcribe the following audio/video file accurately.
+Language: {language}
+{'Identify different speakers and label them (Speaker 1, Speaker 2, etc.).' if speaker_diarization else ''}
+
+Return your response as valid JSON with this exact structure:
+{{
+  "text": "The full transcription text...",
+  "segments": [
+    {{
+      "id": "seg-1",
+      "start_time": 0.0,
+      "end_time": 5.2,
+      "text": "Segment text...",
+      {"\"speaker\": \"Speaker 1\"," if speaker_diarization else ""}
+      "confidence": 0.95
+    }}
+  ],
+  "language": "{language}"
+}}
+
+Provide accurate timestamps for each segment. Each segment should be a natural sentence or phrase.
+Return ONLY the JSON object, no markdown formatting."""
+
+        # Use Gemini multimodal with the audio/video
+        from vertexai.generative_models import Part
+        audio_part = Part.from_data(data=file_bytes, mime_type=mime_type)
+
+        response = model.generate_content(
+            [audio_part, prompt],
+            generation_config={"temperature": 0.1, "max_output_tokens": 8192}
+        )
+
+        # Parse the AI response
+        response_text = response.text.strip()
+        # Strip markdown code fences if present
+        if response_text.startswith("```"):
+            response_text = response_text.split("\n", 1)[1] if "\n" in response_text else response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3].strip()
+        if response_text.startswith("json"):
+            response_text = response_text[4:].strip()
+
+        result = json_module.loads(response_text)
+
+        return jsonify({
+            "text": result.get("text", ""),
+            "full_text": result.get("text", ""),
+            "segments": result.get("segments", []),
+            "language": result.get("language", language),
+            "status": "complete"
+        })
+
+    except json_module.JSONDecodeError:
+        # If Gemini returns non-JSON, return the raw text as a single segment
+        return jsonify({
+            "text": response_text if 'response_text' in dir() else "",
+            "full_text": response_text if 'response_text' in dir() else "",
+            "segments": [],
+            "language": language if 'language' in dir() else "en",
+            "status": "complete"
+        })
+    except Exception as e:
+        print(f"[ERROR] Transcription failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/transcripts/<transcript_id>/process", methods=["POST"])
 def process_transcript(transcript_id):
     """Process transcript to extract soundbites and metadata."""
@@ -4875,14 +4977,21 @@ def api_vertex_models():
 def api_cloud_stats():
     """Live infrastructure stats from Firestore and GCS."""
     try:
-        collections = ["projects", "series", "episodes", "scripts",
-                        "research", "assets", "interviews", "shots", "users"]
+        stat_collections = {
+            "projects": COLLECTIONS.get("projects", "doc_projects"),
+            "series": COLLECTIONS.get("series", "doc_series"),
+            "episodes": COLLECTIONS.get("episodes", "doc_episodes"),
+            "scripts": COLLECTIONS.get("scripts", "doc_scripts"),
+            "research": COLLECTIONS.get("research", "doc_research"),
+            "assets": COLLECTIONS.get("assets", "doc_assets"),
+            "interviews": COLLECTIONS.get("interviews", "doc_interviews"),
+            "shots": COLLECTIONS.get("shots", "doc_shots"),
+            "users": "users",
+        }
         counts = {}
-        for coll_name in collections:
-            prefix = ENV_PREFIX if ENV_PREFIX and coll_name != "users" else ""
-            full_name = f"{prefix}{coll_name}"
+        for label, full_name in stat_collections.items():
             docs = db.collection(full_name).limit(1000).stream()
-            counts[coll_name] = sum(1 for _ in docs)
+            counts[label] = sum(1 for _ in docs)
 
         # GCS quick summary (just bucket count + total size of primary bucket)
         bucket_count = sum(1 for _ in storage_client.list_buckets())
@@ -5057,13 +5166,10 @@ def proxy_elevenlabs_generate():
             audio_content = tts_resp.audio_content
             content_type = "audio/mpeg"
 
-        # Upload audio to GCS and return URL
-        audio_filename = f"voiceover/{uuid.uuid4().hex}.mp3"
-        bucket = storage_client.bucket(STORAGE_BUCKET)
-        blob = bucket.blob(audio_filename)
-        blob.upload_from_string(audio_content, content_type=content_type)
-        blob.make_public()
-        audio_url = blob.public_url
+        # Return audio as base64 data URI (avoids GCS permission issues for TTS clips)
+        import base64
+        audio_b64 = base64.b64encode(audio_content).decode("utf-8")
+        audio_url = f"data:{content_type};base64,{audio_b64}"
         return jsonify({"audioUrl": audio_url})
     except Exception as e:
         print(f"ElevenLabs/TTS generate proxy error: {e}")
